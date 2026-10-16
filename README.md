@@ -31,7 +31,7 @@ pip install -r requirements.txt
 python inference.py percorso\test_set.csv
 ```
 
-Il programma scrive nella cartella corrente due file (UTF-8, virgola come separatore, punto decimale):
+Il programma scrive nella cartella corrente due file (UTF-8, punto e virgola come separatore, punto decimale):
 
 - `predictions.csv`, una riga per ogni cliente del test:
   `customer_id,pv_installed,pv_installation_date,pv_capacity_kwp`
