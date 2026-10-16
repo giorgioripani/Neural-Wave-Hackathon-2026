@@ -6,3 +6,4 @@ pyarrow==21.0.0
 duckdb==1.4.1
 matplotlib==3.10.7
 ruptures==1.1.10
+pytest==9.1.1
