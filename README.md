@@ -31,14 +31,14 @@ pip install -r requirements.txt
 python inference.py percorso\test_set.csv
 ```
 
-Il programma scrive nella cartella corrente due file (UTF-8, virgola come separatore, punto decimale):
+Il programma scrive nella cartella corrente due file (UTF-8, punto e virgola come separatore, punto decimale):
 
 - `predictions.csv`, una riga per ogni cliente del test:
-  `customer_id,pv_installed,pv_installation_date,pv_capacity_kwp`
+  `customer_id;pv_installed;pv_installation_date;pv_capacity_kwp`
   con `TRUE`/`FALSE`, date `AAAA-MM-GG`, capacità in kWp; data e capacità vuote se `pv_installed=FALSE`.
   I valori si riferiscono all'impianto iniziale.
 - `pv_extensions_predictions.csv` (compito facoltativo), una riga per ogni estensione prevista:
-  `customer_id,extension_date,pv_capacity_after_extension_kwp`
+  `customer_id;extension_date;pv_capacity_after_extension_kwp`
   con la capacità totale dopo l'estensione. Se non ci sono estensioni contiene solo l'intestazione.
 
 Non servono rete né interventi manuali. I modelli addestrati sono in `artifacts/` e vengono caricati da `inference.py`.
