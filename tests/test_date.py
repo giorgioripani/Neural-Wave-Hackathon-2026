@@ -95,3 +95,15 @@ def test_evaluate_customer_synthetic(synth):
     for r in res:
         assert r["n_days"] == r["n_before"] + r["n_after"] <= 730
         assert 0.0 <= r["score"] <= 1.0
+
+
+def test_sql_literal_and_view_on_parquet(tmp_path):
+    import duckdb
+    from src.models.run_date_dev import q
+    assert q("a'b") == "'a''b'"
+    p = tmp_path / "it's.parquet"
+    pd.DataFrame({"customer_id": ["POD1"], "timestamp_epoch": [0], "energy_consumption_kwh": [1.0]}).to_parquet(p)
+    con = duckdb.connect()
+    con.execute(f"CREATE VIEW s AS SELECT * FROM read_parquet({q(str(p))})")
+    n = con.execute("SELECT count(*) FROM s WHERE customer_id = ?", ["POD1"]).fetchone()[0]
+    assert n == 1

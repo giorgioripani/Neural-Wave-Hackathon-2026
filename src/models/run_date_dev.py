@@ -32,6 +32,11 @@ WINDOW_DAYS = 730
 POSITIONS = (0.25, 0.50, 0.75)
 
 
+def q(text: str) -> str:
+    """Letterale SQL tra apici (come in src/loading/prepare_data.py)."""
+    return "'" + text.replace("'", "''") + "'"
+
+
 def window_bounds(true_date, pos: float, days: int = WINDOW_DAYS):
     """Finestra [inizio, fine) di `days` giorni con true_date a frazione `pos`."""
     t = pd.Timestamp(true_date).normalize()
@@ -69,7 +74,8 @@ def main() -> int:
     lab = load_labels(a.labels)
     pos_lab = lab[lab["pv_installed"] & lab["pv_installation_date"].notna()]
     con = duckdb.connect()
-    con.execute("CREATE VIEW s AS SELECT * FROM read_parquet(?)", [a.series])
+    # CREATE VIEW non accetta parametri preparati: percorso come letterale SQL
+    con.execute(f"CREATE VIEW s AS SELECT * FROM read_parquet({q(a.series)})")
 
     rows = []
     for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
