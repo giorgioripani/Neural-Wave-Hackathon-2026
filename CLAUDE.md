@@ -33,7 +33,7 @@ Consegna: domenica 18 ottobre, ore 11:00. `python inference.py path/test.csv` de
 - Curve senza etichetta: NON sono esempi di "no", possono avere il fotovoltaico. Pseudo-etichette permesse: solo previsioni molto sicure, e la valutazione si fa SOLO sui 40 clienti etichettati.
 
 ## Formato di uscita (dal README dei dati)
-UTF-8, separatore VIRGOLA, punto decimale, `TRUE`/`FALSE`, date AAAA-MM-GG, data e kWp vuoti se `pv_installed=FALSE`.
+UTF-8, separatore PUNTO E VIRGOLA, punto decimale, `TRUE`/`FALSE`, date AAAA-MM-GG, data e kWp vuoti se `pv_installed=FALSE`.
 Intestazioni esatte: `customer_id,pv_installed,pv_installation_date,pv_capacity_kwp`
 e `customer_id,extension_date,pv_capacity_after_extension_kwp` (una riga per estensione, kWp TOTALI dopo l'estensione).
 [Il PDF diceva punto e virgola: vale il README salvo diversa conferma degli organizzatori.]
