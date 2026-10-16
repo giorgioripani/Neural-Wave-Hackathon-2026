@@ -1,15 +1,13 @@
 # Neural Wave 2026: rilevamento del fotovoltaico dai profili di consumo (AIL)
 
-> Modello da completare. Sostituire ogni [parentesi quadra] e cancellare questa riga.
-
 ## Team
 | Nome e cognome | Ruolo |
 | --- | --- |
-| Giorgio [cognome] | Integrazione, `inference.py`, consegna |
-| Leonardo [cognome] | Task 2: data di messa in servizio |
-| Andrea [cognome] | Dati, valutazione, report |
-| Flavio [cognome] | Task 1: rilevamento del fotovoltaico, README |
-| Francesco [cognome] | Task 3: capacità in kWp, grafici, video |
+| Giorgio Ripani | Integrazione, `inference.py`, consegna |
+| Leonardo Lodolini | Task 2: data di messa in servizio |
+| Andrea Gallo | Dati, valutazione, report |
+| Flavio Davide Borriello | Task 1: rilevamento del fotovoltaico, README |
+| Francesco Tassi | Task 3: capacità in kWp, grafici, video |
 
 ## Cosa fa
 [2-3 frasi: dalla sola curva di consumo a 15 minuti di un cliente, il programma stima se ha un impianto fotovoltaico, la data di messa in servizio e la capacità in kWp.]
