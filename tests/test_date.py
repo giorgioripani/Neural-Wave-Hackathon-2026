@@ -75,3 +75,23 @@ def test_load_labels_and_score(tmp_path):
     assert lab["customer_id"].tolist() == ["POD001", "POD002"]
     assert lab["pv_installed"].tolist() == [True, False]
     assert score_dates({"POD001": "2024-05-16"}, lab) == pytest.approx(0.5)
+
+
+def test_window_bounds_positions():
+    from src.models.run_date_dev import window_bounds
+    for pos in (0.25, 0.5, 0.75):
+        start, end = window_bounds("2024-05-01", pos)
+        assert (end - start).days == 730
+        assert (pd.Timestamp("2024-05-01") - start).days == round(pos * 730)
+
+
+def test_evaluate_customer_synthetic(synth):
+    from src.models.run_date_dev import evaluate_customer
+    series, labels = synth
+    row = labels[labels["pv_installed"]].iloc[0]
+    daily = daily_midday_ratio(series[series["customer_id"] == row["customer_id"]])
+    res = evaluate_customer(daily, row["pv_installation_date"])
+    assert [r["pos"] for r in res] == [0.25, 0.5, 0.75]
+    for r in res:
+        assert r["n_days"] == r["n_before"] + r["n_after"] <= 730
+        assert 0.0 <= r["score"] <= 1.0
