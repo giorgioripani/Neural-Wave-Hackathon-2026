@@ -1,7 +1,1 @@
-data/
 .venv/
-__pycache__/
-.ipynb_checkpoints/
-outputs/
-predictions.csv
-pv_extensions_predictions.csv
