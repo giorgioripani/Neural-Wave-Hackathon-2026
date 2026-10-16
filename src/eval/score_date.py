@@ -25,7 +25,9 @@ def load_labels(path) -> pd.DataFrame:
 
 
 def score_dates(preds: dict, labels: pd.DataFrame) -> float:
-    """Media di date_score sui clienti con pv_installed=TRUE nelle etichette."""
+    """Media di date_score sui clienti con pv_installed=TRUE nelle etichette.
+    Va bene in sviluppo, quando si usa il si'/no vero (tutti i positivi sono veri
+    positivi). Per il punteggio ufficiale usare src/eval/score.official_score."""
     pos = labels[labels["pv_installed"]]
     if pos.empty:
         return float("nan")
