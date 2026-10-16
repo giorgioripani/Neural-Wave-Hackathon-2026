@@ -29,12 +29,12 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.eval.score_date import date_score, load_labels  # noqa: E402
-from src.models.date import daily_midday_ratio, estimate, estimate_v2, estimate_v3  # noqa: E402
+from src.models.date import daily_midday_ratio, estimate_v1, estimate_v2, estimate_v3  # noqa: E402
 
 SEED = 42
 WINDOW_DAYS = 730
 POSITIONS = (0.25, 0.50, 0.75)
-METHODS = {"v1": estimate, "v2": estimate_v2, "v3": estimate_v3}
+METHODS = {"v1": estimate_v1, "v2": estimate_v2, "v3": estimate_v3}
 # metodi ricalcolati nella stessa esecuzione per il confronto per cliente
 COMPARE = {"v1": [], "v2": ["v1"], "v3": ["v1", "v2"]}
 
@@ -51,9 +51,9 @@ def window_bounds(true_date, pos: float, days: int = WINDOW_DAYS):
     return start, start + pd.Timedelta(days=days)
 
 
-def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, method=estimate) -> list:
+def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, method=estimate_v1) -> list:
     """Una riga di risultato per finestra. daily: colonne date, midday_ratio.
-    method: funzione daily -> 'AAAA-MM-GG' (estimate o estimate_v2)."""
+    method: funzione daily -> 'AAAA-MM-GG' (estimate_v1, estimate_v2 o estimate_v3)."""
     dates = pd.to_datetime(daily["date"])
     t = pd.Timestamp(true_date).normalize()
     rows = []

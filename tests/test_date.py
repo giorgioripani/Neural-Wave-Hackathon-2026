@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from src.eval.score_date import date_score, load_labels, score_dates  # noqa: E402
-from src.models.date import daily_midday_ratio, estimate  # noqa: E402
+from src.models.date import daily_midday_ratio, estimate_v1  # noqa: E402
 from synthetic import make_synthetic  # noqa: E402
 
 
@@ -42,7 +42,7 @@ def test_estimate_on_synthetic_pv(synth):
     scores = []
     for _, row in labels[labels["pv_installed"]].iterrows():
         daily = daily_midday_ratio(series[series["customer_id"] == row["customer_id"]])
-        pred = estimate(daily)
+        pred = estimate_v1(daily)
         assert len(pred) == 10 and pred[4] == "-"
         scores.append(date_score(pred, row["pv_installation_date"]))
     assert np.mean(scores) > 0.9
@@ -52,8 +52,8 @@ def test_estimate_unsorted_and_short():
     dates = pd.date_range("2024-01-01", periods=200, freq="D")
     ratio = np.r_[np.full(120, 2.0), np.full(80, 0.5)]
     daily = pd.DataFrame({"date": dates, "midday_ratio": ratio}).sample(frac=1, random_state=42)
-    assert estimate(daily) == "2024-04-30"
-    assert estimate(daily.sort_values("date").head(10)) == "2024-01-01"
+    assert estimate_v1(daily) == "2024-04-30"
+    assert estimate_v1(daily.sort_values("date").head(10)) == "2024-01-01"
 
 
 def test_date_score():
@@ -214,3 +214,15 @@ def test_run_date_dev_main_v3_on_synthetic(synth, tmp_path, monkeypatch, capsys)
     assert len(lines) == 6 and "vs v1" in lines[4] and "vs v2" in lines[5]
     res = pd.read_csv(out)
     assert {"score", "score_v1", "score_v2", "err_days_v2", "pred_date_v1"} <= set(res.columns)
+
+
+def test_estimate_from_series_synthetic(synth):
+    from src.models.date import estimate, estimate_from_series, estimate_v2
+    assert estimate is estimate_v2
+    series, labels = synth
+    for _, row in labels[labels["pv_installed"]].iterrows():
+        one = series[series["customer_id"] == row["customer_id"]]
+        df = one.rename(columns={"timestamp_epoch": "ts_epoch", "energy_consumption_kwh": "kwh"})[["ts_epoch", "kwh"]]
+        pred = estimate_from_series(df)
+        assert pred == estimate_v2(daily_midday_ratio(one))
+        assert date_score(pred, row["pv_installation_date"]) > 0.9

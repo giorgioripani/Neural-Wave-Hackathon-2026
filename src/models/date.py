@@ -42,7 +42,7 @@ def daily_midday_ratio(series: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-def estimate(daily: pd.DataFrame) -> str:
+def estimate_v1(daily: pd.DataFrame) -> str:
     """daily: una riga per giorno, colonne date e midday_ratio -> 'AAAA-MM-GG'.
 
     Un solo salto di livello (ruptures Dynp, costo l2) sul log del rapporto,
@@ -54,7 +54,7 @@ def estimate(daily: pd.DataFrame) -> str:
     d["date"] = pd.to_datetime(d["date"])
     d = d.replace([np.inf, -np.inf], np.nan).dropna().sort_values("date").reset_index(drop=True)
     if d.empty:
-        raise ValueError("estimate: nessun giorno valido")
+        raise ValueError("estimate_v1: nessun giorno valido")
     if len(d) < 2 * MIN_SEGMENT_DAYS:
         return d["date"].iloc[0].strftime("%Y-%m-%d")
     y = np.log(d["midday_ratio"].clip(lower=EPS_KWH).to_numpy())
@@ -126,3 +126,13 @@ def estimate_v3(daily: pd.DataFrame) -> str:
     forte in estate che in inverno). Stessa regola del 5% e stessi bordi di v2.
     """
     return _step_regression(daily, seasonal_step=True)
+
+
+# Metodo pubblico di default (interfaccia date.estimate in CLAUDE.md).
+estimate = estimate_v2
+
+
+def estimate_from_series(df: pd.DataFrame) -> str:
+    """Serie grezza di UN cliente (colonne ts_epoch, kwh) -> 'AAAA-MM-GG'
+    con daily_midday_ratio + estimate (estimate_v2)."""
+    return estimate(daily_midday_ratio(df))

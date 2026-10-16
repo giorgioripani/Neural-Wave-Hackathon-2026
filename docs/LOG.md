@@ -1,2 +1,4 @@
-# LOG: idee scartate e uso degli agenti
-- Versione 1 (Task 2, Leonardo): change point su rapporto mezzogiorno/notte, finestre UTC fisse, Dynp, 22 clienti x 3 finestre. D 0,547; mediana errore 5,5 giorni; 9 clienti su 22 oltre 30 giorni. Claude Code ha scritto il codice su dati sintetici; l'esecuzione sui dati reali l'ho fatta io.
+
+v1 (change point sul rapporto, finestre UTC fisse): D 0,547; mediana 5,5 gg; 9 clienti su 22 oltre 30 gg.
+v2 (stagionalità + gradino costante, regola “nessun gradino”): D 0,582; mediana 4,0 gg; 7 clienti oltre 30 gg. Scelta.
+v3 (gradino stagionale con termini post·sin e post·cos): D 0,568; mediana 4,5 gg; 6 clienti oltre 30 gg. Scartata: sistema POD22 e POD23 ma crea gradini falsi quando ci sono meno di circa sei mesi di dati prima dell’installazione (POD34, POD35).
