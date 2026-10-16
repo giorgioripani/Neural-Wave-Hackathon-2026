@@ -62,3 +62,50 @@ def estimate(daily: pd.DataFrame) -> str:
     y = np.clip(y, lo, hi)
     bkp = rpt.Dynp(model="l2", min_size=MIN_SEGMENT_DAYS, jump=1).fit(y).predict(n_bkps=1)[0]
     return d["date"].iloc[bkp].strftime("%Y-%m-%d")
+
+
+MIN_SSE_GAIN = 0.05  # il gradino deve ridurre l'errore quadratico di almeno il 5%
+YEAR_DAYS = 365.25
+
+
+def estimate_v2(daily: pd.DataFrame) -> str:
+    """daily: una riga per giorno, colonne date e midday_ratio -> 'AAAA-MM-GG'.
+
+    Regressione log(midday_ratio) ~ costante + sin/cos annuale + gradino(k),
+    per ogni data candidata k ad almeno MIN_SEGMENT_DAYS giorni dai bordi; si
+    tiene k con l'errore quadratico minimo. La stagionalita` e` nel modello,
+    quindi non viene scambiata per un salto. Se il miglior gradino riduce
+    l'errore quadratico di meno di MIN_SSE_GAIN rispetto al modello senza
+    gradino, o la serie e` troppo corta, ritorna il primo giorno.
+    """
+    d = daily[["date", "midday_ratio"]].copy()
+    d["date"] = pd.to_datetime(d["date"])
+    d = d.replace([np.inf, -np.inf], np.nan).dropna().sort_values("date").reset_index(drop=True)
+    if d.empty:
+        raise ValueError("estimate_v2: nessun giorno valido")
+    first = d["date"].iloc[0].strftime("%Y-%m-%d")
+    n = len(d)
+    if n < 2 * MIN_SEGMENT_DAYS + 1:
+        return first
+    y = np.log(d["midday_ratio"].clip(lower=EPS_KWH).to_numpy())
+    lo, hi = np.quantile(y, [0.01, 0.99])
+    y = np.clip(y, lo, hi)
+    t = (d["date"] - d["date"].iloc[0]).dt.days.to_numpy()
+    w = 2 * np.pi * t / YEAR_DAYS
+    base = np.column_stack([np.ones(n), np.sin(w), np.cos(w)])
+
+    def sse(X):
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+        r = y - X @ beta
+        return float(r @ r)
+
+    sse0 = sse(base)
+    best_k, best_sse = None, np.inf
+    for k in range(MIN_SEGMENT_DAYS, n - MIN_SEGMENT_DAYS + 1):
+        step = (np.arange(n) >= k).astype(float)
+        s = sse(np.column_stack([base, step]))
+        if s < best_sse:
+            best_k, best_sse = k, s
+    if sse0 <= 0 or (sse0 - best_sse) / sse0 < MIN_SSE_GAIN:
+        return first
+    return d["date"].iloc[best_k].strftime("%Y-%m-%d")

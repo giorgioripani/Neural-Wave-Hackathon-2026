@@ -9,10 +9,12 @@ n_before e n_after nel CSV lo dicono). Nessun parametro scelto sui risultati.
 
 Uso (dalla radice del repo):
     python src/models/run_date_dev.py [--series data/clean/dev.parquet]
-        [--labels data/pv_labels_dev.csv] [--out outputs/date_dev.csv]
+        [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2]
 
 Stampa solo: clienti, D medio, mediana dell'errore in giorni, clienti con
 errore > 30 giorni (errore del cliente = mediana sulle sue finestre).
+Con --method v2 salva outputs/date_dev_v2.csv (con le colonne *_v1 di confronto)
+e stampa anche i clienti migliorati/peggiorati rispetto a v1 (D medio del cliente).
 """
 import argparse
 import sys
@@ -25,11 +27,12 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.eval.score_date import date_score, load_labels  # noqa: E402
-from src.models.date import daily_midday_ratio, estimate  # noqa: E402
+from src.models.date import daily_midday_ratio, estimate, estimate_v2  # noqa: E402
 
 SEED = 42
 WINDOW_DAYS = 730
 POSITIONS = (0.25, 0.50, 0.75)
+METHODS = {"v1": estimate, "v2": estimate_v2}
 
 
 def q(text: str) -> str:
@@ -44,8 +47,9 @@ def window_bounds(true_date, pos: float, days: int = WINDOW_DAYS):
     return start, start + pd.Timedelta(days=days)
 
 
-def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS) -> list:
-    """Una riga di risultato per finestra. daily: colonne date, midday_ratio."""
+def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, method=estimate) -> list:
+    """Una riga di risultato per finestra. daily: colonne date, midday_ratio.
+    method: funzione daily -> 'AAAA-MM-GG' (estimate o estimate_v2)."""
     dates = pd.to_datetime(daily["date"])
     t = pd.Timestamp(true_date).normalize()
     rows = []
@@ -57,7 +61,7 @@ def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS) -> li
                "n_before": int((wd < t).sum()), "n_after": int((wd >= t).sum()),
                "true_date": t.date(), "pred_date": "", "err_days": np.nan, "score": 0.0}
         if len(w) > 0:
-            pred = estimate(w)
+            pred = method(w)
             row.update(pred_date=pred, err_days=(pd.Timestamp(pred) - t).days, score=date_score(pred, t))
         rows.append(row)
     return rows
@@ -67,9 +71,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--series", default="data/clean/dev.parquet")
     ap.add_argument("--labels", default="data/pv_labels_dev.csv")
-    ap.add_argument("--out", default="outputs/date_dev.csv")
+    ap.add_argument("--out", default=None, help="default outputs/date_dev.csv (v1) o outputs/date_dev_v2.csv (v2)")
+    ap.add_argument("--method", choices=sorted(METHODS), default="v1")
     a = ap.parse_args()
     np.random.seed(SEED)
+    out = a.out or ("outputs/date_dev.csv" if a.method == "v1" else f"outputs/date_dev_{a.method}.csv")
+    # con v2 calcoliamo anche v1 nella stessa esecuzione, per il confronto per cliente
+    methods = [a.method] if a.method == "v1" else [a.method, "v1"]
 
     lab = load_labels(a.labels)
     pos_lab = lab[lab["pv_installed"] & lab["pv_installation_date"].notna()]
@@ -86,18 +94,29 @@ def main() -> int:
         if series.empty:
             rows.append({"customer_id": cid, "true_date": true_date.date(), "n_days": 0, "score": 0.0})
             continue
-        for r in evaluate_customer(daily_midday_ratio(series), true_date):
-            rows.append({"customer_id": cid, **r})
+        daily = daily_midday_ratio(series)
+        res_m = {m: evaluate_customer(daily, true_date, method=METHODS[m]) for m in methods}
+        for i, r in enumerate(res_m[a.method]):
+            extra = {}
+            if "v1" in res_m and a.method != "v1":
+                v1 = res_m["v1"][i]
+                extra = {"pred_date_v1": v1["pred_date"], "err_days_v1": v1["err_days"], "score_v1": v1["score"]}
+            rows.append({"customer_id": cid, **r, **extra})
 
     res = pd.DataFrame(rows)
-    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-    res.to_csv(a.out, index=False)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    res.to_csv(out, index=False)
 
     per_cust = res.groupby("customer_id").agg(score=("score", "mean"), abs_err=("err_days", lambda e: e.abs().median()))
     print(f"Clienti:                 {len(per_cust)}")
     print(f"D medio:                 {res['score'].mean():.3f}")
     print(f"Mediana errore (giorni): {res['err_days'].abs().median():.1f}")
     print(f"Clienti errore > 30 gg:  {int((per_cust['abs_err'].isna() | (per_cust['abs_err'] > 30)).sum())}")
+    if "score_v1" in res.columns:
+        # migliorato/peggiorato = D medio del cliente sulle sue finestre, v2 contro v1
+        diff = res.assign(score_v1=res["score_v1"].fillna(0.0)).groupby("customer_id").apply(
+            lambda g: g["score"].mean() - g["score_v1"].mean(), include_groups=False)
+        print(f"Migliorati / peggiorati vs v1: {int((diff > 1e-9).sum())} / {int((diff < -1e-9).sum())}")
     return 0
 
 

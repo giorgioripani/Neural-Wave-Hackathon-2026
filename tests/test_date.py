@@ -107,3 +107,66 @@ def test_sql_literal_and_view_on_parquet(tmp_path):
     con.execute(f"CREATE VIEW s AS SELECT * FROM read_parquet({q(str(p))})")
     n = con.execute("SELECT count(*) FROM s WHERE customer_id = ?", ["POD1"]).fetchone()[0]
     assert n == 1
+
+
+def _log_ratio_daily(step_day=None, season=0.0, n=730, noise=0.1, seed=42):
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2023-01-01", periods=n, freq="D")
+    t = np.arange(n)
+    y = 0.7 + season * np.sin(2 * np.pi * t / 365.25) + noise * rng.standard_normal(n)
+    if step_day is not None:
+        y = y - 0.6 * (t >= step_day)
+    return pd.DataFrame({"date": dates, "midday_ratio": np.exp(y)}), dates
+
+
+def test_v2_synthetic_pv(synth):
+    from src.models.date import estimate_v2
+    series, labels = synth
+    for _, row in labels[labels["pv_installed"]].iterrows():
+        pred = estimate_v2(daily_midday_ratio(series[series["customer_id"] == row["customer_id"]]))
+        assert date_score(pred, row["pv_installation_date"]) > 0.9
+
+
+def test_v2_no_step_returns_first_day():
+    from src.models.date import estimate_v2
+    daily, dates = _log_ratio_daily(step_day=None, season=0.5)
+    assert estimate_v2(daily) == dates[0].strftime("%Y-%m-%d")
+
+
+def test_v2_strong_seasonality_with_step():
+    from src.models.date import estimate_v2
+    daily, dates = _log_ratio_daily(step_day=400, season=1.0)
+    assert date_score(estimate_v2(daily), dates[400]) > 0.8
+
+
+def test_v2_short_series():
+    from src.models.date import estimate_v2
+    daily, dates = _log_ratio_daily(step_day=20, n=50)
+    assert estimate_v2(daily) == dates[0].strftime("%Y-%m-%d")
+
+
+def test_evaluate_customer_method_v2(synth):
+    from src.models.date import estimate_v2
+    from src.models.run_date_dev import evaluate_customer
+    series, labels = synth
+    row = labels[labels["pv_installed"]].iloc[0]
+    daily = daily_midday_ratio(series[series["customer_id"] == row["customer_id"]])
+    res = evaluate_customer(daily, row["pv_installation_date"], method=estimate_v2)
+    assert len(res) == 3 and all(0.0 <= r["score"] <= 1.0 for r in res)
+
+
+def test_run_date_dev_main_v2_on_synthetic(synth, tmp_path, monkeypatch, capsys):
+    from src.models import run_date_dev
+    series, labels = synth
+    pq = tmp_path / "dev.parquet"
+    series.to_parquet(pq)
+    lab = labels.assign(pv_installed=labels["pv_installed"].map({True: "TRUE", False: "FALSE"}))
+    lab.to_csv(tmp_path / "labels.csv", sep=";", index=False)
+    out = tmp_path / "date_dev_v2.csv"
+    monkeypatch.setattr(sys, "argv", ["run_date_dev.py", "--series", str(pq), "--labels",
+                                      str(tmp_path / "labels.csv"), "--out", str(out), "--method", "v2"])
+    assert run_date_dev.main() == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 5 and lines[0].endswith("3") and "Migliorati" in lines[4]
+    res = pd.read_csv(out)
+    assert {"score", "score_v1", "err_days_v1"} <= set(res.columns) and len(res) == 9
