@@ -170,3 +170,47 @@ def test_run_date_dev_main_v2_on_synthetic(synth, tmp_path, monkeypatch, capsys)
     assert len(lines) == 5 and lines[0].endswith("3") and "Migliorati" in lines[4]
     res = pd.read_csv(out)
     assert {"score", "score_v1", "err_days_v1"} <= set(res.columns) and len(res) == 9
+
+
+def _seasonal_step_daily(step_day=400, n=730, noise=0.1, seed=42):
+    """Il calo dopo il gradino e` forte in estate e quasi nullo in inverno."""
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2023-01-01", periods=n, freq="D")
+    summer = 0.5 * (1 - np.cos(2 * np.pi * (dates.dayofyear.to_numpy() - 15) / 365.25))  # 0 a gennaio, 1 a luglio
+    y = 0.7 + 0.3 * np.sin(2 * np.pi * np.arange(n) / 365.25) + noise * rng.standard_normal(n)
+    y = y - (np.arange(n) >= step_day) * (0.1 + 1.0 * summer)
+    return pd.DataFrame({"date": dates, "midday_ratio": np.exp(y)}), dates
+
+
+def test_v3_seasonal_amplitude_step():
+    from src.models.date import estimate_v3
+    for step_day in (200, 400, 550):
+        daily, dates = _seasonal_step_daily(step_day=step_day)
+        assert date_score(estimate_v3(daily), dates[step_day]) > 0.8, step_day
+
+
+def test_v3_no_step_and_synthetic_pv(synth):
+    from src.models.date import estimate_v3
+    daily, dates = _log_ratio_daily(step_day=None, season=0.5)
+    assert estimate_v3(daily) == dates[0].strftime("%Y-%m-%d")
+    series, labels = synth
+    for _, row in labels[labels["pv_installed"]].iterrows():
+        pred = estimate_v3(daily_midday_ratio(series[series["customer_id"] == row["customer_id"]]))
+        assert date_score(pred, row["pv_installation_date"]) > 0.9
+
+
+def test_run_date_dev_main_v3_on_synthetic(synth, tmp_path, monkeypatch, capsys):
+    from src.models import run_date_dev
+    series, labels = synth
+    pq = tmp_path / "dev.parquet"
+    series.to_parquet(pq)
+    lab = labels.assign(pv_installed=labels["pv_installed"].map({True: "TRUE", False: "FALSE"}))
+    lab.to_csv(tmp_path / "labels.csv", sep=";", index=False)
+    out = tmp_path / "date_dev_v3.csv"
+    monkeypatch.setattr(sys, "argv", ["run_date_dev.py", "--series", str(pq), "--labels",
+                                      str(tmp_path / "labels.csv"), "--out", str(out), "--method", "v3"])
+    assert run_date_dev.main() == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 6 and "vs v1" in lines[4] and "vs v2" in lines[5]
+    res = pd.read_csv(out)
+    assert {"score", "score_v1", "score_v2", "err_days_v2", "pred_date_v1"} <= set(res.columns)

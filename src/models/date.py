@@ -68,21 +68,13 @@ MIN_SSE_GAIN = 0.05  # il gradino deve ridurre l'errore quadratico di almeno il 
 YEAR_DAYS = 365.25
 
 
-def estimate_v2(daily: pd.DataFrame) -> str:
-    """daily: una riga per giorno, colonne date e midday_ratio -> 'AAAA-MM-GG'.
-
-    Regressione log(midday_ratio) ~ costante + sin/cos annuale + gradino(k),
-    per ogni data candidata k ad almeno MIN_SEGMENT_DAYS giorni dai bordi; si
-    tiene k con l'errore quadratico minimo. La stagionalita` e` nel modello,
-    quindi non viene scambiata per un salto. Se il miglior gradino riduce
-    l'errore quadratico di meno di MIN_SSE_GAIN rispetto al modello senza
-    gradino, o la serie e` troppo corta, ritorna il primo giorno.
-    """
+def _step_regression(daily: pd.DataFrame, seasonal_step: bool) -> str:
+    """Nucleo comune di estimate_v2 e estimate_v3 (vedi le loro docstring)."""
     d = daily[["date", "midday_ratio"]].copy()
     d["date"] = pd.to_datetime(d["date"])
     d = d.replace([np.inf, -np.inf], np.nan).dropna().sort_values("date").reset_index(drop=True)
     if d.empty:
-        raise ValueError("estimate_v2: nessun giorno valido")
+        raise ValueError("estimate: nessun giorno valido")
     first = d["date"].iloc[0].strftime("%Y-%m-%d")
     n = len(d)
     if n < 2 * MIN_SEGMENT_DAYS + 1:
@@ -102,10 +94,35 @@ def estimate_v2(daily: pd.DataFrame) -> str:
     sse0 = sse(base)
     best_k, best_sse = None, np.inf
     for k in range(MIN_SEGMENT_DAYS, n - MIN_SEGMENT_DAYS + 1):
-        step = (np.arange(n) >= k).astype(float)
-        s = sse(np.column_stack([base, step]))
+        post = (np.arange(n) >= k).astype(float)
+        cols = [base, post]
+        if seasonal_step:
+            cols += [post * base[:, 1], post * base[:, 2]]
+        s = sse(np.column_stack(cols))
         if s < best_sse:
             best_k, best_sse = k, s
     if sse0 <= 0 or (sse0 - best_sse) / sse0 < MIN_SSE_GAIN:
         return first
     return d["date"].iloc[best_k].strftime("%Y-%m-%d")
+
+
+def estimate_v2(daily: pd.DataFrame) -> str:
+    """daily: una riga per giorno, colonne date e midday_ratio -> 'AAAA-MM-GG'.
+
+    Regressione log(midday_ratio) ~ costante + sin/cos annuale + gradino(k),
+    per ogni data candidata k ad almeno MIN_SEGMENT_DAYS giorni dai bordi; si
+    tiene k con l'errore quadratico minimo. La stagionalita` e` nel modello,
+    quindi non viene scambiata per un salto. Se il miglior gradino riduce
+    l'errore quadratico di meno di MIN_SSE_GAIN rispetto al modello senza
+    gradino, o la serie e` troppo corta, ritorna il primo giorno.
+    """
+    return _step_regression(daily, seasonal_step=False)
+
+
+def estimate_v3(daily: pd.DataFrame) -> str:
+    """Come estimate_v2, ma il gradino ha anche un'ampiezza stagionale:
+    log(midday_ratio) ~ costante + sin/cos + post + post*sin + post*cos,
+    con post = 1 dal giorno candidato in poi (il calo del fotovoltaico e` piu`
+    forte in estate che in inverno). Stessa regola del 5% e stessi bordi di v2.
+    """
+    return _step_regression(daily, seasonal_step=True)
