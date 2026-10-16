@@ -2,3 +2,8 @@
 venv/
 data/*
 !data/.gitkeep
+__pycache__/
+outputs/
+predictions.csv
+pv_extensions_predictions.csv
+.ipynb_checkpoints/
