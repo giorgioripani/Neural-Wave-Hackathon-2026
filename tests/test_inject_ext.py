@@ -118,8 +118,9 @@ def test_main_on_synthetic(tmp_path, monkeypatch, capsys):
     assert inject_ext_dev.main() == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert lines[0].startswith("Clienti usati: 1, saltati: 0")  # POD0002 escluso: ha un'estensione
-    assert len(lines) == 2 + len(THRESHOLDS) and lines[1].startswith("date0 ristimato (v2)")
-    assert all("F1_ext" in ln for ln in lines[2:])
+    assert len(lines) == 3 + len(THRESHOLDS) and lines[1].startswith("date0 ristimato (v2)")
+    assert lines[2].strip().startswith("di cui data vera")
+    assert all("F1_ext" in ln for ln in lines[3:])
     for f in ("injections.csv", "originals.csv", "skipped.csv", "summary.csv"):
         assert (tmp_path / "out" / f).exists()
 
@@ -138,3 +139,14 @@ def test_date_method_v4_used_for_reestimate():
     _, inj, _ = evaluate_customer("POD0001", make_series(), day_ts(INSTALL_DAY), 4.0, np.random.default_rng(42),
                                   thresholds=(0.05,), reestimate_date0=True, date_fn=estimate_v4)
     assert all(row["date0"] == row["date0_reest"] for row in inj)
+
+
+def test_true_date_split():
+    from src.models.inject_ext_dev import true_date_split
+    inj = pd.DataFrame({
+        "customer_id": ["A", "A", "B", "C", "D"], "inj_date": ["2024-01-01"] * 5, "r": [1.0] * 5,
+        "date0_reest": ["2024-01-10", "2024-01-10", "2024-01-05", "2024-01-20", "2023-06-01"],
+        "true_date": ["2022-05-01", "2022-05-01", "2023-03-01", "2023-06-01", "2022-01-01"],
+        "win_start": ["2023-01-01"] * 5})
+    # A: prima della finestra (contato una volta), B: giorno 59, C: dopo, D: ristima lontana (esclusa)
+    assert true_date_split(inj) == (2, 1)

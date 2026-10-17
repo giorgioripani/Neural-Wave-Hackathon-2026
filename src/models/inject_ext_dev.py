@@ -57,7 +57,8 @@ MIN_AFTER_DATE0, MIN_BEFORE_END = 120, 90
 R_VALUES = (0.3, 0.6, 1.0)
 THRESHOLDS = (0.05, 0.075, 0.10, 0.15)
 DATE_METHODS = {"v2": estimate_v2, "v4": estimate_v4}
-TEST_EXT, TEST_PV = 3, 10  # test immaginato: 3 estensioni, 10 clienti con fotovoltaico
+TEST_EXT, TEST_PV = 3, 10
+EARLY_DAYS = 60  # installazione vera "all'inizio": prima della finestra o nei primi 60 giorni  # test immaginato: 3 estensioni, 10 clienti con fotovoltaico
 
 
 def monthly_drop(daily: pd.DataFrame, true_date) -> np.ndarray | None:
@@ -139,6 +140,7 @@ def evaluate_customer(cid, full: pd.DataFrame, true_date, kwp_label, rng, thresh
             for t, exts in res.items():
                 row = {"customer_id": cid, "inj_date": d.date(), "r": r, "threshold": t,
                        "date0_orig": date0, "date0": d0, "date0_reest": reest,
+                       "true_date": pd.Timestamp(true_date).date(), "win_start": first.date(),
                        "true_kwp_after": true_kwp, "n_pred": len(exts), "found": False,
                        "err_days": np.nan, "kwp_err_pct": np.nan}
                 if exts:
@@ -158,6 +160,17 @@ def reest_near(inj: pd.DataFrame) -> dict:
     out = {r: (int(near[one["r"] == r].sum()), int((one["r"] == r).sum())) for r in R_VALUES}
     out["tot"] = (int(near.sum()), len(one))
     return out
+
+
+def true_date_split(inj: pd.DataFrame) -> tuple:
+    """Fra le iniezioni (una volta per cliente, data, r) con date0_reest entro
+    MATCH_DAYS giorni dalla data iniettata: quante hanno la data vera prima di
+    win_start + EARLY_DAYS, e quante dopo. -> (prima, dopo)."""
+    one = inj.drop_duplicates(["customer_id", "inj_date", "r"])
+    near = (pd.to_datetime(one["date0_reest"]) - pd.to_datetime(one["inj_date"])).dt.days.abs() <= MATCH_DAYS
+    one = one[near]
+    early = pd.to_datetime(one["true_date"]) < pd.to_datetime(one["win_start"]) + pd.Timedelta(days=EARLY_DAYS)
+    return int(early.sum()), int((~early).sum())
 
 
 def summarize(inj: pd.DataFrame, orig: pd.DataFrame, n_customers: int) -> pd.DataFrame:
@@ -230,6 +243,8 @@ def main() -> int:
     method = a.date_method if a.reestimate_date0 else "v2"
     print(f"date0 ristimato ({method}) entro {MATCH_DAYS} gg dalla data iniettata: "
           f"{near['tot'][0]}/{near['tot'][1]} ({per_r})")
+    early, later = true_date_split(inj_df)
+    print(f"  di cui data vera prima della finestra o nei primi {EARLY_DAYS} gg: {early}, dopo: {later}")
     summ = summarize(inj_df, orig_df, n_used)
     summ.to_csv(out / "summary.csv", index=False)
     for _, r in summ.iterrows():
