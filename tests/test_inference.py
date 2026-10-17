@@ -230,3 +230,24 @@ def test_extensions_output_format(tmp_path, monkeypatch):
         cid, date, kwp = line.split(";")
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", date)
         assert re.fullmatch(r"\d+(\.\d{1,2})?", kwp) and float(kwp) > 0
+
+
+def test_detect_crash_for_one_customer_is_true(tmp_path, monkeypatch, capsys):
+    """P1: detect che fallisce su un solo cliente -> quel cliente TRUE (riserva), contato."""
+    from src.models import detect
+    orig = detect.features_from_daily
+    calls = {"n": 0}
+
+    def flaky(d):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return orig(d)
+
+    monkeypatch.setattr(detect, "features_from_daily", flaky)
+    used = {}
+    rows, ids = _load(tmp_path, monkeypatch, detect, used)
+    by_id = {r["customer_id"]: r for r in rows}
+    _assert_pv(by_id[ids[0]])
+    assert used["detect"] == 1
+    assert "detect: 1 clienti senza probabilita', messi TRUE" in capsys.readouterr().out

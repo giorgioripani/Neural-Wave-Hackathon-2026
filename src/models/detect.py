@@ -147,16 +147,21 @@ def features_from_daily(d: pd.DataFrame) -> dict:
 
 def customer_features(df: pd.DataFrame) -> pd.DataFrame:
     """15-min series of ALL customers -> one row per customer (index = customer_id as str).
-    A customer whose features fail gets all-NaN features (-> no PV); the others are unaffected."""
+    A customer whose features fail gets all-NaN features and is listed in
+    .attrs["failed"]: predict() returns NaN for it (inference.py then uses its
+    fallback, TRUE). The others are unaffected."""
     ids = df["customer_id"].astype(str)
-    rows = {}
+    rows, failed = {}, []
     for cid, g in df.groupby(ids, sort=True):
         try:
             rows[cid] = features_from_daily(daily_profile(g))
         except Exception as e:
             print(f"[detect] features failed for one customer ({cid}): {type(e).__name__}: {e}", file=sys.stderr)
             rows[cid] = dict.fromkeys(FEATURES, float("nan"))
-    return pd.DataFrame.from_dict(rows, orient="index", columns=FEATURES)
+            failed.append(cid)
+    out = pd.DataFrame.from_dict(rows, orient="index", columns=FEATURES)
+    out.attrs["failed"] = failed
+    return out
 
 
 def load_params() -> dict:
@@ -201,4 +206,5 @@ def predict(df: pd.DataFrame) -> dict[str, float]:
     rc = p.get("recent")
     if rc:
         proba = apply_recent(proba, feat[rc["feature"]], rc["sign"], rc["threshold"], rc["scale"])
+    proba[proba.index.isin(feat.attrs.get("failed", []))] = np.nan  # crash -> no probability (fallback TRUE)
     return {str(k): float(v) for k, v in proba.items()}

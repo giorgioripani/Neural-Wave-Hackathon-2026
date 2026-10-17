@@ -1,3 +1,4 @@
+import math
 import sys
 from pathlib import Path
 
@@ -103,8 +104,15 @@ def test_one_failing_customer_does_not_affect_others():
     finally:
         detect.features_from_daily = orig
     assert sorted(out) == sorted(lab["customer_id"])
-    assert out["POD0000"] == 0.499
+    assert math.isnan(out["POD0000"])  # crash -> no probability: inference.py makes it TRUE
     assert out["POD0001"] == clean["POD0001"] and out["POD0002"] == clean["POD0002"]
+
+
+def test_not_computable_features_stay_0499():
+    series, _ = make_synthetic(n_customers=2, days=400)
+    short = series[series["customer_id"] == "POD0000"].head(96 * 3)  # 3 days: no summer, no step
+    out = detect.predict(pd.concat([short, series[series["customer_id"] == "POD0001"]]))
+    assert out["POD0000"] == 0.499
 
 
 def test_features_have_all_keys():
