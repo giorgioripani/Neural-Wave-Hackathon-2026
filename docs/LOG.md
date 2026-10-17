@@ -30,3 +30,35 @@ Tolto fillna(0.0): NaN lasciati, media sugli intervalli presenti, EPS diviso per
 - 2026-10-17 Andrea (agente, con il consenso di Leonardo): `run_date_dev.py` ora misura di default il metodo della pipeline (v2), legge con `load_series` e tiene le finestre di 730 giorni DENTRO i dati (stessa regola di `validate.py`; prima una finestra poteva uscire dai dati e restare di pochi mesi). Nuovi numeri sui 22 clienti: v1 D 0,523 (mediana 6,5 gg, 9 oltre 30 gg); v2 D 0,597 (mediana 2,5 gg, 7 oltre 30 gg); v3 D 0,570 (mediana 4,5 gg, 6 oltre 30 gg). Classifica invariata, v2 resta il metodo scelto.
 
 Le estensioni sono pronte sul branch lodoscatenato. In inference.py, per ogni cliente segnato TRUE, chiama extensions.predict_extensions(serie_cliente, data_iniziale, kwp_iniziale) dentro un try/except (in caso di errore: nessuna estensione). Raccogli le righe di tutti i clienti con il loro customer_id, applica extensions.top_k(righe, k=3) e scrivile in pv_extensions_predictions.csv (date AAAA-MM-GG, kWp con il punto decimale). Se non ci sono righe, resta la sola intestazione. Il bonus non può togliere punti al punteggio principale. Valutazione con iniezione sintetica, in modo realistico: F1_ext atteso circa 0,29 (circa 2,5 punti). Dettagli in docs/LOG.md.
+
+(.venv) lodo@lodo-XPS-13-9370:~/Desktop/AI-uto-$ git add src/models/date.py src/models/run_date_dev.py src/models/inject_ext_dev.py tests/
+git commit -m "Data v4 (due gradini): D 0,628 vs 0,597 sui 22 clienti"
+git push
+
+python src/models/inject_ext_dev.py --reestimate-date0 --date-method v2
+python src/models/inject_ext_dev.py --reestimate-date0 --date-method v4
+[lodoscatenato f24706a] Data v4 (due gradini): D 0,628 vs 0,597 sui 22 clienti
+ 5 files changed, 164 insertions(+), 21 deletions(-)
+Enumerating objects: 19, done.
+Counting objects: 100% (19/19), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (10/10), done.
+Writing objects: 100% (10/10), 3.96 KiB | 3.96 MiB/s, done.
+Total 10 (delta 9), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (9/9), completed with 9 local objects.
+To https://github.com/giorgioripani/AI-uto-.git
+   77c4e76..f24706a  lodoscatenato -> lodoscatenato
+Clienti usati: 19, saltati: 2 (pochi_mesi 2)
+date0 ristimato (v2) entro 30 gg dalla data iniettata: 27/114 (r0.3=5/38 r0.6=9/38 r1.0=13/38)
+soglia 0.050: recall 0.17 (r0.3=0.11 r0.6=0.13 r1.0=0.26), err gg 2, err kWp 42%, FA/cliente 0.00, F1_ext 0.29
+soglia 0.075: recall 0.11 (r0.3=0.08 r0.6=0.11 r1.0=0.13), err gg 2, err kWp 53%, FA/cliente 0.00, F1_ext 0.19
+soglia 0.100: recall 0.07 (r0.3=0.00 r0.6=0.08 r1.0=0.13), err gg 1, err kWp 41%, FA/cliente 0.00, F1_ext 0.13
+soglia 0.150: recall 0.04 (r0.3=0.00 r0.6=0.05 r1.0=0.05), err gg 1, err kWp 53%, FA/cliente 0.00, F1_ext 0.07
+Clienti usati: 19, saltati: 2 (pochi_mesi 2)
+date0 ristimato (v4) entro 30 gg dalla data iniettata: 27/114 (r0.3=5/38 r0.6=9/38 r1.0=13/38)
+soglia 0.050: recall 0.19 (r0.3=0.11 r0.6=0.18 r1.0=0.29), err gg 2, err kWp 66%, FA/cliente 0.00, F1_ext 0.32
+soglia 0.075: recall 0.14 (r0.3=0.08 r0.6=0.16 r1.0=0.18), err gg 2, err kWp 67%, FA/cliente 0.00, F1_ext 0.25
+soglia 0.100: recall 0.11 (r0.3=0.00 r0.6=0.13 r1.0=0.18), err gg 1, err kWp 56%, FA/cliente 0.00, F1_ext 0.19
+soglia 0.150: recall 0.07 (r0.3=0.00 r0.6=0.11 r1.0=0.11), err gg 1, err kWp 67%, FA/cliente 0.00, F1_ext 0.13
+
+Diagnosi della data rubata dall’estensione: 26 casi su 27 hanno l’installazione vera prima della finestra (o nei primi 60 giorni). In quei casi nella finestra si vede un solo gradino e il metodo lo prende per l’installazione. Soluzione individuata: decidere se prima del gradino c’è già fotovoltaico con il rilevatore del Task 1.
