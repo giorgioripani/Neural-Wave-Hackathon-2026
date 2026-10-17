@@ -1,103 +1,169 @@
 # ============================================================
 # FILE: src/models/detect.py          (owner: Flavio)
 # Task 1: does the customer have PV?
-# Called by:  inference.py            (owner: Giorgio)
-# Input from: data/clean/*.parquet  <- src/loading/prepare_data.py (owner: Andrea)
-# Model file: artifacts/detect.pkl
+# Called by:  inference.py            (owner: Giorgio)  ->  predict(df)
+# Params:     artifacts/detect_params.json  (written by src/models/run_detect.py)
 # Tests:      tests/test_detect.py
 # ============================================================
+"""Task 1: does the customer have PV? (Flavio)
 
-"""Task 1: does the customer have PV? (Flavio)"""
-
+Pipeline: 15-min series -> daily_profile() (one row per UTC day, mean kWh per
+fixed UTC band) -> features_from_daily() (one dict per customer/window)
+-> predict(): threshold rule on ONE feature chosen by run_detect.py.
+Only consumption and calendar: fixed UTC hours, no sun/weather/location.
+"""
+import json
 from pathlib import Path
-import joblib
+
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
+import ruptures as rpt
 
-SEED = 42 #
-MODEL_PATH = Path("artifacts") / "detect.pkl"   # FILE: artifacts/detect.pkl
+ARTIFACTS = Path(__file__).resolve().parents[2] / "artifacts"
+PARAMS_PATH = ARTIFACTS / "detect_params.json"   # FILE: artifacts/detect_params.json
 
-# Calendar constants (allowed). Solar bands = FIXED UTC hours, never sun position.
-SUMMER = {5, 6, 7, 8} #month numbers
+# Calendar constants (allowed): month numbers
+SUMMER = {5, 6, 7, 8}
 WINTER = {11, 12, 1, 2}
 
-# Raw columns, as written by src/loading/prepare_data.py (FILE: data/clean/*.parquet)
-RAW_ID = "customer_id"               # str
-RAW_KWH = "energy_consumption_kwh"   # float, kWh per 15 min
-RAW_EPOCH = "timestamp_epoch"        # int, Unix seconds (use this, not timestamp_local)
+# Fixed UTC bands [start, end). night and midday are the same as src/models/date.py
+BANDS = {
+    "night": (0, 4),
+    "morning": (6, 8),
+    "midday": (10, 13),
+    "early_aft": (12, 14),
+    "afternoon": (16, 19),
+    "evening": (17, 20),
+}
+EPS = 1e-3            # kWh per interval, avoids log(0)
+ZERO_KWH = 0.005      # "near zero" for the clamp feature (negatives NOT counted)
+MIN_ZERO_SLOTS = 5    # clamp: at least 5 near-zero midday intervals in the day
+MIN_SEG_DAYS = 30     # step: each side of the change point lasts >= 30 days
+CLAMP_MIN = 0.05      # tiebreaker: clamp counts only if >= 5% of summer days clamp
 
-# Fixed UTC windows [start, end), same as src/models/date.py (Leonardo)
-MIDDAY_UTC_HOURS = (10, 13)
-NIGHT_UTC_HOURS = (0, 4)
+FEATURES = [
+    "summer_level",    # 1 median log(midday/night) in summer           (low = PV)
+    "winter_level",    # 1 same in winter
+    "drop",            #   winter_level - summer_level (old baseline)   (high = PV)
+    "dip_summer",      # 2 log(midday / mean(morning, afternoon)), summer (low = PV)
+    "var_summer",      # 3 std of daily log(midday/night) in summer     (high = PV)
+    "latest_summer",   # 4 summer_level in the most recent summer only  (low = PV)
+    "step",            # 5 size of the lasting step down in log(midday/night) (high = PV)
+    "clamp_summer",    # 6 share of summer days with >=5 near-zero midday slots and normal night
+    "duck",            # 7 log(evening/early_aft): summer minus winter  (high = PV)
+    "weekend_summer",  # 8 summer_level on Sat-Sun only                 (low = PV)
+]
 
-# Columns of the daily table built by daily_bands() below
-COL_ID = "customer_id"
-COL_DATE = "date"        # UTC day
-COL_MIDDAY = "midday"    # kWh in midday UTC band
-COL_NIGHT = "night"      # kWh in night UTC band
-
-FEATURES = ["ratio_summer", "ratio_winter", "ratio_diff"]
+# Used only if artifacts/detect_params.json is missing (placeholder, not tuned)
+DEFAULT_PARAMS = {"feature": "drop", "sign": 1, "threshold": 0.5, "scale": 0.2}
 
 
-def daily_bands(series: pd.DataFrame) -> pd.DataFrame:
-    """Raw 15-min rows (prepare_data.py columns) -> one row per customer and UTC day:
-    customer_id, date, midday, night (kWh). Never assumes 96 rows per day."""
-    ts = pd.to_datetime(series[RAW_EPOCH].astype("int64"), unit="s", utc=True)
-    kwh = series[RAW_KWH].astype(float).clip(lower=0).fillna(0.0)
+def daily_profile(series: pd.DataFrame) -> pd.DataFrame:
+    """15-min series of ONE customer -> one row per UTC day:
+    date, mean kWh per interval in each band, mid_zero (count of near-zero midday slots).
+    Accepts dataset columns or load_series columns. Never assumes 96 rows per day."""
+    kwh_col = "kwh" if "kwh" in series.columns else "energy_consumption_kwh"
+    ts_col = "ts_epoch" if "ts_epoch" in series.columns else "timestamp_epoch"
+    ts = pd.to_datetime(series[ts_col].astype("int64"), unit="s", utc=True)
+    raw = series[kwh_col].astype(float)
+    kwh = raw.clip(lower=0)
     hour = ts.dt.hour
-    df = pd.DataFrame({
-        COL_ID: series[RAW_ID].astype(str),
-        COL_DATE: ts.dt.date,
-        COL_MIDDAY: kwh.where((hour >= MIDDAY_UTC_HOURS[0]) & (hour < MIDDAY_UTC_HOURS[1]), 0.0),
-        COL_NIGHT: kwh.where((hour >= NIGHT_UTC_HOURS[0]) & (hour < NIGHT_UTC_HOURS[1]), 0.0),
-    })
-    return df.groupby([COL_ID, COL_DATE], as_index=False)[[COL_MIDDAY, COL_NIGHT]].sum()
+    df = pd.DataFrame({"date": ts.dt.normalize().dt.tz_localize(None)})
+    for name, (a, b) in BANDS.items():
+        df[name] = kwh.where((hour >= a) & (hour < b))
+    mid = (hour >= BANDS["midday"][0]) & (hour < BANDS["midday"][1])
+    df["mid_zero"] = (mid & (raw >= 0) & (raw <= ZERO_KWH)).astype(int)
+    agg = {name: "mean" for name in BANDS}
+    agg["mid_zero"] = "sum"
+    return df.groupby("date", sort=True).agg(agg).reset_index()
 
-def customer_features(daily: pd.DataFrame) -> pd.DataFrame:
-    """Daily rows -> one row per customer (index = customer_id as str).
-    Idea: with PV, midday withdrawal drops relative to night, much more in summer.
-    #computes three numbers per customer:
-    #1)the midday-to-night ratio in summer
-    #2)the same ratio in winter
-    #3)the difference between them.
-    #If a season is missing, it fills in a value instead of dropping the customer.
-    """
-    d = daily.copy() #copy input data to not modify it
-    d[COL_ID] = d[COL_ID].astype(str) #make custamer_id a string
-    d["month"] = pd.to_datetime(d[COL_DATE]).dt.month #extract month number from date
-    eps = 1e-6  #epsilon (small number)
 
-    def band_ratio(months):
-        sub = d[d["month"].isin(months)]
-        g = sub.groupby(COL_ID)[[COL_MIDDAY, COL_NIGHT]].sum()
-        return g[COL_MIDDAY] / (g[COL_NIGHT] + eps) #+eps to avoid division by zero
-    feat = pd.DataFrame(index=pd.Index(d[COL_ID].unique(), name=COL_ID))
-    feat["ratio_summer"] = band_ratio(SUMMER)
-    feat["ratio_winter"] = band_ratio(WINTER)
-    feat["ratio_diff"] = feat["ratio_winter"] - feat["ratio_summer"]
-    # TODO: more features (share of near-zero midday intervals, jump over time...)
-    # Missing season (short series): fill with neutral value, never drop a customer.
-    return feat[FEATURES].fillna(feat[FEATURES].median()).fillna(0.0)
+def _step_size(y: np.ndarray) -> float:
+    """One change point on a daily series; mean before minus mean after (> 0 = drop)."""
+    y = y[~np.isnan(y)]
+    if len(y) < 2 * MIN_SEG_DAYS:
+        return float("nan")
+    bkp = rpt.Binseg(model="l2", min_size=MIN_SEG_DAYS, jump=5).fit(y.reshape(-1, 1)).predict(n_bkps=1)[0]
+    return float(y[:bkp].mean() - y[bkp:].mean())
 
-def fit(feat: pd.DataFrame, labels: pd.Series):
-    """Train on labelled customers and save to artifacts/detect.pkl.
-    labels: index = customer_id (str), values = True/False (pv_installed).
-    """
-    y = labels.loc[feat.index].astype(int)
-    model = make_pipeline(StandardScaler(), LogisticRegression(random_state=SEED))
-    model.fit(feat[FEATURES], y)
-    MODEL_PATH.parent.mkdir(exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
-    return model
 
-def predict(feat: pd.DataFrame, model=None) -> dict[str, float]:
-    """Return {customer_id: probability of PV}. One entry per customer, always."""
-    if model is None:
-        model = joblib.load(MODEL_PATH)
-    proba = model.predict_proba(feat[FEATURES])[:, 1]
-    return dict(zip(feat.index.astype(str), proba.astype(float)))
-# TODO (later): leave-one-out evaluation on 2-year windows -> src/eval/ (Andrea) or here. 
+def features_from_daily(d: pd.DataFrame) -> dict:
+    """Daily profile of ONE customer (or one window) -> dict of FEATURES (NaN if not computable)."""
+    nan = float("nan")
+    if d.empty:
+        return dict.fromkeys(FEATURES, nan)
+    month = d["date"].dt.month
+    summer, winter = month.isin(SUMMER), month.isin(WINTER)
+    weekend = d["date"].dt.dayofweek >= 5
 
+    def log_ratio(a, b):
+        return np.log((a + EPS) / (b + EPS))
+
+    def med(s, mask):
+        s = s[mask].dropna()
+        return float(s.median()) if len(s) else nan
+
+    mid_night = log_ratio(d["midday"], d["night"])
+    dip = log_ratio(d["midday"], (d["morning"] + d["afternoon"]) / 2)
+    duck = log_ratio(d["evening"], d["early_aft"])
+    night_ok = d["night"] >= 0.5 * d["night"].median()
+
+    f = {}
+    f["summer_level"] = med(mid_night, summer)
+    f["winter_level"] = med(mid_night, winter)
+    f["drop"] = f["winter_level"] - f["summer_level"]
+    f["dip_summer"] = med(dip, summer)
+    f["var_summer"] = float(mid_night[summer].std()) if summer.sum() >= 10 else nan
+    if summer.any():
+        last_year = d.loc[summer, "date"].dt.year.max()
+        f["latest_summer"] = med(mid_night, summer & (d["date"].dt.year == last_year))
+    else:
+        f["latest_summer"] = nan
+    f["step"] = _step_size(mid_night.to_numpy())
+    f["clamp_summer"] = float(((d["mid_zero"] >= MIN_ZERO_SLOTS) & night_ok)[summer].mean()) if summer.any() else nan
+    f["duck"] = med(duck, summer) - med(duck, winter)
+    f["weekend_summer"] = med(mid_night, summer & weekend)
+    return f
+
+
+def customer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """15-min series of ALL customers -> one row per customer (index = customer_id as str)."""
+    ids = df["customer_id"].astype(str)
+    rows = {cid: features_from_daily(daily_profile(g)) for cid, g in df.groupby(ids, sort=True)}
+    return pd.DataFrame.from_dict(rows, orient="index", columns=FEATURES)
+
+
+def load_params() -> dict:
+    """Read the rule from artifacts/, fall back to DEFAULT_PARAMS."""
+    if PARAMS_PATH.is_file():
+        return {**DEFAULT_PARAMS, **json.loads(PARAMS_PATH.read_text(encoding="utf-8"))}
+    return dict(DEFAULT_PARAMS)
+
+
+def proba_from_feature(x: pd.Series, sign: int, threshold: float, scale: float) -> pd.Series:
+    """Feature -> probability in [0, 1]; > 0.5 exactly when sign * (x - threshold) > 0.
+    Missing feature -> 0.499, i.e. classified as no PV."""
+    z = (sign * (x - threshold) / scale).clip(-50, 50)
+    return (1.0 / (1.0 + np.exp(-z))).fillna(0.499)
+
+
+def apply_tiebreak(proba: pd.Series, x: pd.Series, threshold: float, band: float,
+                   tie: pd.Series, tie_min: float) -> pd.Series:
+    """Grey zone |x - threshold| <= band: the main feature is unsure, so the
+    tiebreaker decides (PV if tie >= tie_min). Outside the zone nothing changes."""
+    grey = (x - threshold).abs() <= band
+    out = proba.copy()
+    out[grey] = np.where(tie[grey].fillna(0) >= tie_min, 0.6, 0.4)
+    return out
+
+
+def predict(df: pd.DataFrame) -> dict[str, float]:
+    """Return {customer_id: probability of PV} with exactly one entry per customer."""
+    p = load_params()
+    feat = customer_features(df)
+    proba = proba_from_feature(feat[p["feature"]], p["sign"], p["threshold"], p["scale"])
+    tb = p.get("tiebreak")
+    if tb and tb["band"] > 0:
+        proba = apply_tiebreak(proba, feat[p["feature"]], p["threshold"], tb["band"],
+                               feat[tb["feature"]], tb["min"])
+    return {str(k): float(v) for k, v in proba.items()}
