@@ -117,7 +117,7 @@ def test_not_computable_features_stay_0499():
 
 def test_window_features_full_series_one_row():
     from src.models import run_detect
-    series, _ = make_synthetic(n_customers=1, days=900)
+    series, _ = make_synthetic(n_customers=1, days=1200)
     d = detect.daily_profile(series)
     rows = run_detect.window_features(d, full_series=True)
     assert len(rows) == 1 and rows[0]["end"] == d["date"].max()
