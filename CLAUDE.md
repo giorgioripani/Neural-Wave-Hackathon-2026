@@ -50,8 +50,10 @@ In lettura il separatore del CSV di test va rilevato in automatico.
 Lavora solo nel modulo della persona che ti usa. Se serve toccare un altro modulo, dillo prima.
 
 ## Interfacce (proposta, Andrea e Giorgio le fissano venerdì sera)
-- `load_series(path) -> DataFrame`: `customer_id` (str), `ts_epoch` (int), `kwh` (float), `ts_local` (str).
-- `daily_features(df) -> DataFrame`: una riga per cliente e giorno (consumo di mezzogiorno, notte, sera e rapporti).
+- `src.loading.load.load_series(path, customers=None)`: CSV o Parquet -> `customer_id` (str), `ts_epoch` (int), `kwh` (float), `ts_local` (str). Non scarta clienti; kWh negativi -> 0, mancanti NaN; duplicati (cliente, epoch) tolti.
+- `src.loading.load.daily_features(df)`: una riga per cliente e giorno UTC (sempre 96 misure, niente problemi di ora legale): `n`, `total_kwh`, `midday` (10-13 UTC), `night` (0-4), `evening` (17-21), medie per quarto d'ora, `midday_night`, `midday_evening`, `weekday`, `month`.
+- `src.eval.score.official_score(pred, labels)`: F1, D, P e punteggio (D e P solo sui veri positivi). CLI: `python src/eval/score.py predictions.csv labels.csv`.
+- `src.eval.validate.validate(series, labels, featurize, fit_predict)`: leave-one-out su finestre di 2 anni, 5 giri, seed 42. Baseline: 54,6 punti.
 - `detect.predict(feat) -> {customer_id: probabilità}`; `date.estimate(feat_cliente) -> 'AAAA-MM-GG'`;
   `capacity.estimate(feat_cliente, data) -> kWp`.
 [Aggiornare qui ogni cambio di firma.]
