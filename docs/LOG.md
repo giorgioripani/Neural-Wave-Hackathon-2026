@@ -122,3 +122,8 @@ Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova m
 Agente usato per scrivere src/eval/loo_pipeline.py: pipeline di inference.py dentro validate.py (2 anni, 5 giri, seed 42).
 Artefatti attuali 79,19 ± 2,92; soglie detect ricalcolate senza il cliente 78,10 ± 2,42; detect e capacity ricalcolati 77,93 ± 2,42 (F1 0,909, D 0,608, P 0,439). La perdita per l'in-sample è piccola (circa 1,3 punti).
 Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo (dip_spread + rec_drop, geo_b), fatta guardando tutti i 40 clienti. Neanche date.py v2 è stato scelto in LOO.
+
+## 17/10 — Estensioni: audit e confronto anno su anno (Andrea, con agente Claude)
+Audit: extensions.py non è rotto (formato, id, kWp totali e collegamento giusti; sintetico F1_ext 0,29-0,50). Sull'unica estensione vera fa 0 perché cade 48 giorni prima della fine dei dati: il gradino migliore è un altro, 474 giorni prima; con END_MARGIN_DAYS 30 invece di 60 non cambia nulla.
+Scartato: confronto anno su anno (28 gg dopo e prima di t, meno gli stessi giorni dell'anno prima) su mezzogiorno, 7-16 UTC e spalle, log o lineare, mediana o quantile 0,1-0,2, finestre 28 o 42 gg. Data dell'estensione vera giusta entro ±6 gg con la mediana, ma il suo calo è dentro il rumore dei 19 clienti senza estensione (8-15 di loro superano lo stesso calo con soglia -0,5): niente soglia con 0 falsi allarmi. Il meteo di un mese tra due anni sposta la firma quanto un raddoppio dei kWp.
+Nuovo src/eval/score_ext.py: punteggio ufficiale del bonus (abbinamento uno a uno entro 30 gg). fake_test con il metodo attuale: TP 0 FP 3 FN 1, bonus 0.
