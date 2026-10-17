@@ -12,7 +12,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | Giorgio | Integrazione, `inference.py`, repo dell'organizzazione, Swisstransfer | `inference.py`, `demo/` | [branch] | [stato] |
 | Andrea | Dati e punteggio ufficiale; report di 3 pagine | `src/loading/`, `src/eval/` | `andrea/eval` (in main) | Fatto: prepare_data, load_series, daily_features, score.py, validate.py. Prossimo: punteggio della pipeline intera, grafici e tabelle per il report |
 | Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | `flavio/detect2` (in main) | In main: `dip_spread` + secondo passo `rec_drop` (installazioni recenti), F1 LOO 0,952 (0 FP, 2 FN); regola in `artifacts/detect_params.json` |
-| Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | `Leonardo/data1` | Task 2 v2 + fix fillna in main. Prossimo: test sintetico realistico |
+| Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py`, `src/models/extensions.py` | `lodoscatenato` (in main) | Task 2 v2 in main (v4 provata, non di default). Estensioni in main e collegate in `inference.py` (`predict_extensions_refined`, top 3): F1_ext atteso 0,29-0,50 sull'iniezione sintetica, 0 sull'unica estensione vera del dev |
 | Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | `francesco/capacity` | branch pronto per la PR verso main; in uso `geo_b` (media geometrica B lineare x mediana): P 0,437 con data vera e con data stimata da date.py, mediana 0,415 (validate.py, seed 42; con seed 7 0,429). `geo_b_loglog`, taglia e altre combinazioni scartate |
 
 ## Traguardi
@@ -25,6 +25,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 - [ ] Dopo la consegna: presentazione da 5 minuti
 
 ## Fatto (già in main)
+- 17/10 Leonardo: estensioni in main (c18a288) e collegate in `inference.py` (09e9ce2): al massimo 3 righe in `pv_extensions_predictions.csv`, riserva `ext` nel riepilogo; `predictions.csv` invariato (78,38), tempo su fake_test 14 s.
 - 17/10 Leonardo: Task 2 v2 (stagionalità + gradino, regola "nessun gradino") in main; su 22 clienti, finestre di 2 anni dentro i dati: D 0,597, mediana errore 2,5 giorni, 7 clienti oltre 30 giorni.
 - 17/10 03:13 Andrea: dati puliti (dev 40 clienti, senza etichette 1147 clienti), `load_series`, `daily_features`, `score.py` (formula ufficiale, unico file di punteggio), `validate.py` (leave-one-out, finestre di 2 anni). Baseline 54,58.
 - 17/10 Giorgio: `inference.py` provvisorio con riserve; sul test finto scrive 40 righe nel formato giusto.
@@ -49,6 +50,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | --- | --- | --- | --- | --- | --- |
 | 17/10 | 066bc37, baseline (sempre TRUE, data a metà finestra, kWp mediano) | 0,710 | 0,045 | 0,415 | 54,58 ± 0,41 |
 | 17/10 | ebe5364, pipeline intera (detect + date + capacity) su fake_test, IN-SAMPLE (ottimistico, non LOO) | 0,952 | 0,372 | 0,448 | 78,38 |
+| 17/10 | 09e9ce2, estensioni su fake_test, IN-SAMPLE: 3 previste, 1 vera (TP 0, FP 3, FN 1), F1_ext 0, bonus 0 (con 10 x F1_ext, formula non ufficiale) | - | - | - | 78,38 + 0 |
 
 ## Quota Claude (controllare con /status circa ogni ora)
 | Persona | Quota usata | Crediti extra |
