@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.models import capacity, capacity_a, capacity_b, capacity_common as cc, train_capacity
+from src.models import (capacity, capacity_a, capacity_b, capacity_blend, capacity_common as cc,
+                        capacity_size, train_capacity)
 from tests.synthetic import make_synthetic
 
 B_PARAMS = {"method": "b", "feature": "drop_kw", "form": "linear", "a": 10.0, "b": 2.0,
@@ -24,6 +25,7 @@ def _fake_table(n=12, seed=42):
     kwp = rng.uniform(30, 900, n)
     return pd.DataFrame({
         "kwp": kwp, "drop_kw": kwp / 3, "peak_kw": kwp / 2, "mean_kw": kwp / 5,
+        "night_ref_kw": (kwp / 7) ** 1.25, "all_ref_kw": kwp / 6,
         "log_size": np.log(kwp / 4), "rel_drop_summer": rng.uniform(0.2, 0.8, n),
         "rel_drop_winter": rng.uniform(0, 0.3, n), "zero_share": rng.uniform(0, 0.6, n),
         "has_pre": rng.integers(0, 2, n).astype(float)})
@@ -134,16 +136,100 @@ def test_a_params_are_json_serializable(tmp_path):
     assert cc.read_params(tmp_path / "a.json") == p
 
 
+# ----------------------------------------------------------------- metodo taglia
+
+def test_size_features_from_reference_days():
+    s, lab = make_synthetic(n_customers=2, days=730)
+    one, row = _one(s, lab, True)
+    f = capacity_size.features(one, row["pv_installation_date"])
+    d = cc.daily_kw(one)
+    ref = d[d["date"] < pd.Timestamp(row["pv_installation_date"])]
+    assert f["night_ref_kw"] == pytest.approx(ref["night_kw"].mean())
+    assert f["all_ref_kw"] == pytest.approx(ref["all_kw"].mean())
+
+
+def test_size_features_nan_without_reference():
+    s, _ = make_synthetic(n_customers=1, days=250)
+    f = capacity_size.features(s.iloc[: 20 * 96], "2023-01-05")
+    assert all(math.isnan(v) for v in f.values())
+
+
+@pytest.mark.parametrize("feature,exponent", [("night_ref_kw", 0.8), ("all_ref_kw", 1.0)])
+def test_size_fit_recovers_loglog_relation(feature, exponent):
+    t = _fake_table()
+    p = capacity_size.fit(t, feature)
+    assert p["b"] == pytest.approx(exponent, rel=1e-6)
+    pred = [capacity_size.predict(r, p) for r in t.to_dict("records")]
+    assert np.allclose(pred, t["kwp"], rtol=1e-6)
+
+
+def test_size_predict_falls_back_on_bad_feature():
+    p = capacity_size.fit(_fake_table())
+    for x in (math.nan, 0.0, -3.0):
+        assert capacity_size.predict({"night_ref_kw": x}, p) == p["fallback_kwp"]
+
+
+# ----------------------------------------------------------------- combinazione con la mediana
+
+def test_blend_combine_geo_and_clip():
+    assert capacity_blend.combine(400.0, 100.0, "geo") == pytest.approx(200.0)
+    assert capacity_blend.combine(400.0, 100.0, "clip") == 200.0
+    assert capacity_blend.combine(20.0, 100.0, "clip") == 50.0
+    assert capacity_blend.combine(150.0, 100.0, "clip") == 150.0
+
+
+def test_blend_median_only_from_training_table():
+    t = _fake_table()
+    p = capacity_blend.fit(t.iloc[1:], "b", "geo")
+    assert p["median"] == pytest.approx(t["kwp"].iloc[1:].median())
+    assert p["median"] != pytest.approx(t["kwp"].median())
+
+
+@pytest.mark.parametrize("base", list(capacity_blend.BASES))
+@pytest.mark.parametrize("mode", capacity_blend.MODES)
+def test_blend_predict_between_base_and_median(base, mode):
+    t = _fake_table()
+    p = capacity_blend.fit(t, base, mode)
+    mod = capacity_blend.BASES[base][0]
+    for r in t.to_dict("records"):
+        kwp, b, m = capacity_blend.predict(r, p), mod.predict(r, p["inner"]), p["median"]
+        assert min(b, m) - 1e-9 <= kwp <= max(b, m) + 1e-9
+
+
+def test_blend_rejects_unknown_base_or_mode():
+    with pytest.raises(ValueError):
+        capacity_blend.fit(_fake_table(), "nessuno", "geo")
+    with pytest.raises(ValueError):
+        capacity_blend.fit(_fake_table(), "b", "media")
+
+
+def test_blend_features_union_of_bases():
+    s, lab = make_synthetic(n_customers=2, days=730)
+    one, row = _one(s, lab, True)
+    f = capacity_blend.features(one, row["pv_installation_date"])
+    assert {"drop_kw", "peak_kw", "night_ref_kw", "all_ref_kw"} <= set(f)
+
+
+# ----------------------------------------------------------------- scelta del metodo
+
+def test_choose_needs_min_gain_over_median():
+    assert train_capacity.choose({"median": 0.415, "x": 0.430}) == "median"
+    assert train_capacity.choose({"median": 0.415, "x": 0.436, "y": 0.42}) == "x"
+    assert train_capacity.choose({"median": 0.415, "x": 0.30}) == "median"
+
+
 # ----------------------------------------------------------------- capacity.estimate (entry point)
 
 def _params_for_all_methods():
     t = _fake_table()
     return {"median": {"method": "median", "fallback_kwp": 169.5},
             "a": {**capacity_a.fit(t), "fallback_kwp": 169.5},
-            "b": {**capacity_b.fit(t), "fallback_kwp": 169.5}}
+            "b": {**capacity_b.fit(t), "fallback_kwp": 169.5},
+            "size": {**capacity_size.fit(t), "fallback_kwp": 169.5},
+            "blend": {**capacity_blend.fit(t, "b", "geo"), "fallback_kwp": 169.5}}
 
 
-@pytest.mark.parametrize("method", ["median", "a", "b"])
+@pytest.mark.parametrize("method", ["median", "a", "b", "size", "blend"])
 def test_predict_with_every_method_positive_float(method):
     params = _params_for_all_methods()[method]
     s, lab = make_synthetic(n_customers=2, days=730)
@@ -153,7 +239,7 @@ def test_predict_with_every_method_positive_float(method):
         assert isinstance(kwp, float) and kwp > 0
 
 
-@pytest.mark.parametrize("method", ["median", "a", "b"])
+@pytest.mark.parametrize("method", ["median", "a", "b", "size", "blend"])
 def test_estimate_short_series_still_positive(method, monkeypatch):
     monkeypatch.setattr(capacity, "load_params", lambda: _params_for_all_methods()[method])
     s, _ = make_synthetic(n_customers=1, days=250)

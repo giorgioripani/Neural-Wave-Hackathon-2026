@@ -6,15 +6,20 @@ solo i kWp, senza dipendere da detect.py e date.py. La data vera del cliente
 lasciato fuori viene dalle etichette e serve solo come data, non come risposta.
 
 Metodi (configurazioni fissate prima di guardare i risultati):
-    median   mediana dei kWp degli altri clienti (baseline di Andrea, P ~0,415)
-    b        capacity_b, kWp = a + b x drop_kw
-    b_ratio  capacity_b, kWp = k x peak_kw
-    a        capacity_a, Ridge su 5 feature verso log(kWp)
+    median          mediana dei kWp degli altri clienti (baseline di Andrea, P ~0,415)
+    b               capacity_b, kWp = a + b x drop_kw
+    b_ratio         capacity_b, kWp = k x peak_kw
+    a               capacity_a, Ridge su 5 feature verso log(kWp)
+    size_night      capacity_size, log kWp = a + b log(notte nei giorni di riferimento)
+    size_all        capacity_size, log kWp = a + b log(media giornaliera nei giorni di riferimento)
+    geo_b, clip_b   capacity_blend: B lineare in media geometrica con la mediana / limitato a 0,5-2x
+    geo_size_night, geo_size_all   capacity_blend: taglia in media geometrica con la mediana
 
 Uso (solo sviluppo, legge data/):
-    python -m src.models.train_capacity [--method auto|median|b|b_ratio|a]
+    python -m src.models.train_capacity [--method auto|<nome>[,<nome>...]]
             [--series data/clean/dev.parquet] [--labels data/raw/pv_labels_dev.csv]
-auto = il metodo con P medio piu` alto (a parita`, la mediana). Stampa <= 10 righe,
+auto = prova i metodi di AUTO_RUN. Vince il P medio piu` alto, ma solo se batte la
+mediana di almeno MIN_GAIN; altrimenti resta la mediana. Stampa <= 10 righe,
 previsioni per cliente in outputs/capacity_validate_<metodo>.csv.
 """
 from __future__ import annotations
@@ -29,12 +34,13 @@ import pandas as pd
 from src.eval.score import load_labels
 from src.eval.validate import POS_RANGE, SEED, crop, validate, window
 from src.loading.load import load_series
-from src.models import capacity_a, capacity_b
+from src.models import capacity_a, capacity_b, capacity_blend, capacity_size
 from src.models.capacity import ARTIFACT
 from src.models.capacity_common import daily_kw, save_params
 
 ROOT = Path(__file__).resolve().parents[2]
 DAY = pd.Timedelta(days=1)
+MIN_GAIN = 0.02  # un metodo sostituisce la mediana solo se la batte di almeno tanto in P
 
 # nome -> (modulo, fit). None = mediana.
 METHODS = {
@@ -42,7 +48,21 @@ METHODS = {
     "b": (capacity_b, capacity_b.fit),
     "b_ratio": (capacity_b, lambda t: capacity_b.fit(t, "peak_kw", "ratio")),
     "a": (capacity_a, capacity_a.fit),
+    "size_night": (capacity_size, lambda t: capacity_size.fit(t, "night_ref_kw")),
+    "size_all": (capacity_size, lambda t: capacity_size.fit(t, "all_ref_kw")),
+    "geo_b": (capacity_blend, lambda t: capacity_blend.fit(t, "b", "geo")),
+    "clip_b": (capacity_blend, lambda t: capacity_blend.fit(t, "b", "clip")),
+    "geo_size_night": (capacity_blend, lambda t: capacity_blend.fit(t, "size_night", "geo")),
+    "geo_size_all": (capacity_blend, lambda t: capacity_blend.fit(t, "size_all", "geo")),
 }
+# a e b_ratio sono gia` misurati (0,378 e 0,212): fuori dal giro di default per stare in 10 righe
+AUTO_RUN = ["median", "b", "size_night", "size_all", "geo_b", "clip_b", "geo_size_night", "geo_size_all"]
+
+
+def choose(p_mean: dict[str, float], min_gain: float = MIN_GAIN) -> str:
+    """Metodo con P medio piu` alto, se batte la mediana di almeno min_gain; altrimenti 'median'."""
+    best = max(p_mean, key=p_mean.get)
+    return best if p_mean[best] >= p_mean["median"] + min_gain else "median"
 
 
 def featurize(series: pd.DataFrame):
@@ -98,7 +118,7 @@ def training_table(series: pd.DataFrame, labels: pd.DataFrame, mod) -> pd.DataFr
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--method", default="auto", choices=["auto", *METHODS])
+    ap.add_argument("--method", default="auto", help="auto oppure nomi separati da virgola")
     ap.add_argument("--series", default="data/clean/dev.parquet")
     ap.add_argument("--labels", default="data/raw/pv_labels_dev.csv")
     a = ap.parse_args(argv)
@@ -106,7 +126,11 @@ def main(argv: list[str]) -> int:
     series, labels = load_series(a.series), load_labels(a.labels)
     labels = labels[labels["customer_id"].isin(series["customer_id"].unique())].reset_index(drop=True)
     true_dates = dict(zip(labels["customer_id"], labels["pv_installation_date"]))
-    names = list(METHODS) if a.method == "auto" else sorted({"median", a.method})
+    asked = AUTO_RUN if a.method == "auto" else a.method.split(",")
+    unknown = set(asked) - set(METHODS)
+    if unknown:
+        ap.error(f"metodi sconosciuti: {sorted(unknown)}; disponibili: {list(METHODS)}")
+    names = ["median"] + [n for n in asked if n != "median"]
 
     print(f"clienti: {len(labels)} (con PV: {int(labels['pv_installed'].sum())}), validate.py 5 giri x 2 anni")
     p_mean = {}
@@ -117,10 +141,10 @@ def main(argv: list[str]) -> int:
         tp = preds[preds["pv_installed"] & preds["pv_installed_pred"]]
         err = (tp["pv_capacity_kwp_pred"] - tp["pv_capacity_kwp"]).abs() / tp["pv_capacity_kwp"]
         p_mean[name] = float(summary["P"].mean())
-        print(f"  {name:8} P {p_mean[name]:.3f} ± {summary['P'].std():.3f}   "
-              f"err. mediano {err.median():.2f}   clienti con err < 25%: {(err < 0.25).mean():.0%}")
+        print(f"  {name:15} P {p_mean[name]:.3f} ± {summary['P'].std():.3f}   "
+              f"err. mediano {err.median():.2f}   err < 50%: {(err < 0.5).mean():.0%}")
 
-    best = a.method if a.method != "auto" else max(names, key=lambda n: (round(p_mean[n], 3), n == "median"))
+    best = choose(p_mean) if a.method == "auto" or len(names) > 2 else names[-1]
     median_kwp = float(labels.loc[labels["pv_installed"], "pv_capacity_kwp"].median())
     if METHODS[best] is None:
         params = {"method": "median"}

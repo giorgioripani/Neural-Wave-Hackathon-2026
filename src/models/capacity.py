@@ -4,8 +4,11 @@ estimate(series, date) -> kWp (float > 0). Il metodo lo decide l'artefatto
 artifacts/capacity.json, scritto da src/models/train_capacity.py:
     "a"       capacity_a: regressione Ridge su piu` feature solari verso log(kWp)
     "b"       capacity_b: calo di mezzogiorno dopo la data (lineare o x costante)
+    "size"    capacity_size: log kWp lineare nel log della taglia del cliente
+    "blend"   capacity_blend: un modello base avvicinato alla mediana di training
     "median"  mediana dei kWp di sviluppo (se nessun metodo la batte in validazione)
-Per provare un altro metodo: python -m src.models.train_capacity --method a|b|b_ratio|median
+Per provare un altro metodo: python -m src.models.train_capacity --method <nome>
+(nomi in train_capacity.METHODS)
 Niente rete e niente data/ in inferenza: solo l'artefatto.
 """
 from __future__ import annotations
@@ -16,12 +19,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.models import capacity_a, capacity_b
+from src.models import capacity_a, capacity_b, capacity_blend, capacity_size
 from src.models.capacity_common import FALLBACK_KWP, read_params
 
 ART = Path(__file__).resolve().parents[2] / "artifacts"
 ARTIFACT = ART / "capacity.json"
-MODULES = {"a": capacity_a, "b": capacity_b}
+MODULES = {m.NAME: m for m in (capacity_a, capacity_b, capacity_size, capacity_blend)}
 
 
 @lru_cache(maxsize=1)
