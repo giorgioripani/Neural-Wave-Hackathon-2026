@@ -28,7 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.eval.score_date import date_score, load_labels  # noqa: E402
+from src.eval.score import date_score, load_labels  # noqa: E402
 from src.models.date import daily_midday_ratio, estimate_v1, estimate_v2, estimate_v3  # noqa: E402
 
 SEED = 42

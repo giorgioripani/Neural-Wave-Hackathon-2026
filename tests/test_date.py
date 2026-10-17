@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.eval.score_date import date_score, load_labels, score_dates  # noqa: E402
+from src.eval.score import date_score, load_labels, score_dates  # noqa: E402
 from src.models.date import daily_midday_ratio, estimate_v1  # noqa: E402
 from synthetic import make_synthetic  # noqa: E402
 
