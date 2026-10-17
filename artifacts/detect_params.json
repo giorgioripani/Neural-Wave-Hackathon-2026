@@ -1,0 +1,12 @@
+{
+  "feature": "dip_spread",
+  "sign": 1,
+  "threshold": 0.8525391886215261,
+  "scale": 0.747310568807556,
+  "recent": {
+    "feature": "rec_drop",
+    "sign": 1,
+    "threshold": 0.11991965807201357,
+    "scale": 0.34371844064221163
+  }
+}

@@ -11,7 +11,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | --- | --- | --- | --- | --- |
 | Giorgio | Integrazione, `inference.py`, repo dell'organizzazione, Swisstransfer | `inference.py`, `demo/` | [branch] | [stato] |
 | Andrea | Dati e punteggio ufficiale; report di 3 pagine | `src/loading/`, `src/eval/` | `andrea/eval` (in main) | Fatto: prepare_data, load_series, daily_features, score.py, validate.py. Prossimo: punteggio della pipeline intera, grafici e tabelle per il report |
-| Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | [branch] | [stato] |
+| Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | `flavio/detect2` | Feature scelta: `dip_spread`, F1 LOO 0,927 (0 FP, 3 FN) |
 | Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | `Leonardo/data1` | Task 2 v2 + fix fillna in main. Prossimo: test sintetico realistico |
 | Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | `francesco/capacity` | branch pronto per la PR verso main; in uso `geo_b` (media geometrica B lineare x mediana): P 0,437 con data vera e con data stimata da date.py, mediana 0,415 (validate.py, seed 42; con seed 7 0,429). `geo_b_loglog`, taglia e altre combinazioni scartate |
 
@@ -32,6 +32,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 ## In corso
 - Leonardo: Task 2, test sintetico realistico.
 - Andrea: punteggio della pipeline intera appena detect e capacity sono in main.
+- Flavio: feature per installazioni recenti e dip normalizzato per i grandi impianti commerciali (sab pomeriggio)
 
 ## Bloccato o serve da altri
 - Andrea aspetta `detect.py` da Flavio e `capacity.py` da Francesco in main, per il punteggio dell'intera pipeline (oggi: 0, perche' senza detect tutti i clienti escono FALSE).
@@ -40,6 +41,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 ## Decisioni
 - 2026-10-17 Andrea: kWh negativi -> 0 (riga tenuta) in `load_series`; giorni = giorni UTC (ora legale); D e P solo sui veri positivi (piano, pag. 2).
 - 2026-10-17: CSV di uscita con punto e virgola (confermato dagli organizzatori).
+- Sab 17/10 ore 10:00: scelta `dip_spread` (variabilità del calo di mezzogiorno con le nuvole) come feature per il Task 1; prossimi passi: installazioni recenti e grandi impianti
 
 ## Punteggio misurato (validazione a un cliente alla volta)
 | Data e ora | Versione (commit) | F1 | D | P | Punteggio |
