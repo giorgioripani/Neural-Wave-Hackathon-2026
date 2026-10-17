@@ -11,7 +11,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | --- | --- | --- | --- | --- |
 | Giorgio | Integrazione, `inference.py`, repo dell'organizzazione, Swisstransfer | `inference.py`, `demo/` | [branch] | [stato] |
 | Andrea | Dati e punteggio ufficiale; report di 3 pagine | `src/loading/`, `src/eval/` | [branch] | [stato] |
-| Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | [branch] | [stato] |
+| Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | `flavio/detect2` | Feature scelta: `dip_spread`, F1 LOO 0,927 (0 FP, 3 FN) |
 | Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | [branch] | [stato] |
 | Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | [branch] | [stato] |
 
@@ -28,13 +28,13 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 - [data ora] [nome]: [cosa, in una riga]
 
 ## In corso
-- [nome]: [cosa, quando pensa di finire]
+- Flavio: feature per installazioni recenti e dip normalizzato per i grandi impianti commerciali (sab pomeriggio)
 
 ## Bloccato o serve da altri
 - [nome] aspetta [cosa] da [nome]
 
 ## Decisioni
-- [data ora]: [decisione e motivo in una riga]
+- Sab 17/10 ore 10:00: scelta `dip_spread` (variabilità del calo di mezzogiorno con le nuvole) come feature per il Task 1; prossimi passi: installazioni recenti e grandi impianti
 
 ## Punteggio misurato (validazione a un cliente alla volta)
 | Data e ora | Versione (commit) | F1 | D | P | Punteggio |
