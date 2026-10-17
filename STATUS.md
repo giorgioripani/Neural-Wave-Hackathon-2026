@@ -25,6 +25,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 - [ ] Dopo la consegna: presentazione da 5 minuti
 
 ## Fatto (già in main)
+- 17/10 Giorgio: merge finale in main (f82db85, tag `v2-consegna`): ImprovementDetectAlgorythm, PR #6 (load_test), fix/bug-fixes, PR #5 (score_ext), Leonardo/date-agg; detect con crash -> TRUE; test 2022-2025 (fake_test serie intera, fake_test_2y); 205 test; previsioni sul test a 2 anni identiche a prima dei merge.
 - 17/10 Leonardo: estensioni in main (c18a288) e collegate in `inference.py` (09e9ce2): al massimo 3 righe in `pv_extensions_predictions.csv`, riserva `ext` nel riepilogo; `predictions.csv` invariato (78,38), tempo su fake_test 14 s.
 - 17/10 Leonardo: Task 2 v2 (stagionalità + gradino, regola "nessun gradino") in main; su 22 clienti, finestre di 2 anni dentro i dati: D 0,597, mediana errore 2,5 giorni, 7 clienti oltre 30 giorni.
 - 17/10 03:13 Andrea: dati puliti (dev 40 clienti, senza etichette 1147 clienti), `load_series`, `daily_features`, `score.py` (formula ufficiale, unico file di punteggio), `validate.py` (leave-one-out, finestre di 2 anni). Baseline 54,58.
@@ -54,6 +55,8 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | 17/10 | 45d6f80, pipeline intera LOO, soglie detect ricalcolate senza il cliente lasciato fuori, capacity da artefatto | 0,909 | 0,608 | 0,452 | 78,10 ± 2,42 |
 | 17/10 | 45d6f80, pipeline intera LOO, detect E capacity (geo_b) ricalcolati senza il cliente lasciato fuori: NUMERO PER IL REPORT | 0,909 | 0,608 | 0,439 | 77,93 ± 2,42 |
 | 17/10 | 09e9ce2, estensioni su fake_test, IN-SAMPLE: 3 previste, 1 vera (TP 0, FP 3, FN 1), F1_ext 0, bonus 0 (con 10 x F1_ext, formula non ufficiale) | - | - | - | 78,38 + 0 |
+| 17/10 | f82db85 (`v2-consegna`), pipeline intera LOO tutto_loo sulla SERIE INTERA (protocollo serie_intera, 1 giro deterministico): NUMERO PER IL REPORT | 0,905 | 0,665 | 0,452 | 78,49 |
+| 17/10 | f82db85, in-sample su fake_test serie intera / fake_test_2y (ottimistici) | 0,905 / 0,952 | 0,665 / 0,372 | 0,465 / 0,448 | 78,66 / 78,38 |
 
 ## Quota Claude (controllare con /status circa ogni ora)
 | Persona | Quota usata | Crediti extra |
