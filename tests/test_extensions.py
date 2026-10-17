@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -81,3 +82,98 @@ def test_cut_window_last730():
     assert len(cut) == DAYS * 96
     assert cut["ts_epoch"].min() == s["ts_epoch"].max() - 730 * 86400 + 900
     assert len(cut_window(s, "full")) == len(s)
+
+
+def test_diag_reasons_and_threshold():
+    two = daily_ext_features(make_series([(INSTALL_DAY, 0.2), (EXT_DAY, 0.1)]))
+    one = daily_ext_features(make_series([(INSTALL_DAY, 0.2)]))
+    up = daily_ext_features(make_series([(INSTALL_DAY, 0.2), (EXT_DAY, -0.1)]))
+    d0 = day_str(INSTALL_DAY)
+    diag = {}
+    estimate_extensions(two, d0, 4.0, diag=diag)
+    assert diag["reason"] == "accettato" and diag["best_gain"] >= 0.10
+    estimate_extensions(one, d0, 4.0, diag=diag)
+    assert diag["reason"] in {"sotto_soglia", "gradino_su"} and np.isfinite(diag["best_gain"])
+    estimate_extensions(up, d0, 4.0, diag=diag)
+    assert diag["reason"] == "gradino_su"
+    estimate_extensions(two, d0, 4.0, min_tail_days=10_000, diag=diag)
+    assert diag["reason"] == "coda_corta" and np.isnan(diag["best_gain"])
+    gain, high = {}, {}
+    estimate_extensions(two, d0, 4.0, diag=gain)
+    assert estimate_extensions(two, d0, 4.0, threshold=gain["best_gain"] + 0.01, diag=high) == []
+    assert high["reason"] == "sotto_soglia"
+
+
+def test_why_no_window():
+    from src.models.run_ext_dev import why_no_window
+    lab, pos, ser, ana = {"POD1", "POD2", "POD3"}, {"POD1", "POD2"}, {"POD1"}, {"POD1"}
+    assert why_no_window("POD1", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "ok"
+    assert why_no_window("POD1", pd.NaT, lab, pos, ser, ana) == "data_non_letta"
+    assert why_no_window("pod1 ", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "id_diverso_simile"
+    assert why_no_window("POD9", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "id_assente_da_pv_labels"
+    assert why_no_window("POD3", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "cliente_con_pv_false"
+    assert why_no_window("POD2", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "cliente_assente_dalla_serie"
+
+
+def test_run_ext_dev_main_on_synthetic(tmp_path, monkeypatch, capsys):
+    from src.models import run_ext_dev
+    s = make_series([(INSTALL_DAY, 0.2), (EXT_DAY, 0.1)])
+    idx = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
+    pd.DataFrame({"customer_id": "POD0001", "energy_consumption_kwh": s["kwh"],
+                  "timestamp_local": idx.dt.tz_convert("Europe/Zurich").dt.strftime("%Y-%m-%d %H:%M:%S"),
+                  "timestamp_epoch": s["ts_epoch"]}).to_csv(tmp_path / "s.csv", index=False)
+    (tmp_path / "l.csv").write_text("customer_id;pv_installed;pv_installation_date;pv_capacity_kwp\n"
+                                    f"POD0001;TRUE;{day_str(INSTALL_DAY)};4.0\n")
+    (tmp_path / "e.csv").write_text("customer_id;extension_date;pv_capacity_after_extension_kwp\n"
+                                    f"POD0001;{day_str(EXT_DAY)};6.0\n")
+    monkeypatch.setattr(sys, "argv", ["run_ext_dev", "--series", str(tmp_path / "s.csv"),
+                                      "--labels", str(tmp_path / "l.csv"), "--ext-labels", str(tmp_path / "e.csv"),
+                                      "--out", str(tmp_path / "o.csv"), "--window", "full"])
+    assert run_ext_dev.main() == 0
+    out = capsys.readouterr().out
+    assert len(out.strip().splitlines()) <= 10
+    assert "Estensioni previste:     1" in out
+    assert "accettato 1" in out and "finestra: ok 1" in out
+    assert "dentro finestra: si" in out and "trovata entro 30 gg: si" in out
+    assert (tmp_path / "o_diag.csv").exists()
+
+
+def test_load_ext_labels_date_format(tmp_path):
+    from src.models.run_ext_dev import load_ext_labels
+    p = tmp_path / "e.csv"
+    p.write_text("customer_id;extension_date;pv_capacity_after_extension_kwp\n"
+                 "POD0001;2025-11-13;6,5\nPOD0002; 2024-03-01 ;8.0\n", encoding="utf-8")
+    lab = load_ext_labels(p)
+    assert list(lab["ext_date"]) == [pd.Timestamp("2025-11-13"), pd.Timestamp("2024-03-01")]
+    assert list(lab["kwp_after"]) == [6.5, 8.0]
+    p.write_text("customer_id,extension_date,pv_capacity_after_extension_kwp\nPOD0001,2025-11-13,6.0\n")
+    assert load_ext_labels(p)["ext_date"].iloc[0] == pd.Timestamp("2025-11-13")
+
+
+def test_load_ext_labels_bad_date_raises(tmp_path):
+    from src.models.run_ext_dev import load_ext_labels
+    p = tmp_path / "e.csv"
+    p.write_text("customer_id;extension_date;pv_capacity_after_extension_kwp\n"
+                 "POD0001;2025-11-13;6.0\nPOD0002;13.11.2025;8.0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"1 date su 2.*99\.99\.9999"):
+        load_ext_labels(p)
+
+
+def test_load_ext_labels_mixed_separators(tmp_path):
+    from src.models.run_ext_dev import load_ext_labels
+    p = tmp_path / "e.csv"
+    p.write_text("customer_id,extension_date,pv_capacity_after_extension_kwp\r\n"
+                 "POD0001;2025-11-13;6,5\r\nPOD0002;2024-03-01;8.0\r\n", encoding="utf-8")
+    lab = load_ext_labels(p)
+    assert list(lab["customer_id"]) == ["POD0001", "POD0002"]
+    assert list(lab["ext_date"]) == [pd.Timestamp("2025-11-13"), pd.Timestamp("2024-03-01")]
+    assert list(lab["kwp_after"]) == [6.5, 8.0]
+    assert lab.attrs["cols"] == ["extension_date", "pv_capacity_after_extension_kwp"]
+
+
+def test_load_ext_labels_wrong_field_count_raises(tmp_path):
+    from src.models.run_ext_dev import load_ext_labels
+    p = tmp_path / "e.csv"
+    p.write_text("customer_id,extension_date,pv_capacity_after_extension_kwp\nPOD0001,2025-11-13,6,5\n")
+    with pytest.raises(ValueError, match="numero di campi"):
+        load_ext_labels(p)
