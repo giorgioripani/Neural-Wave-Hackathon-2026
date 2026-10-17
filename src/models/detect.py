@@ -34,6 +34,7 @@ BANDS = {
     "early_aft": (12, 14),
     "afternoon": (16, 19),
     "evening": (17, 20),
+    "daylight": (8, 16),  # daylight_ratio: wide fixed UTC band (calendar hours only)
 }
 EPS = 1e-3            # kWh per interval, avoids log(0)
 ZERO_KWH = 0.005      # "near zero" for the clamp feature (negatives NOT counted)
@@ -44,6 +45,7 @@ SPREAD_Q = (0.1, 0.9) # dip_spread: quantiles of the daily summer dip (sunny vs 
 MIN_SUMMER_DAYS = 10  # dip_spread / var_summer need at least 10 summer days
 RECENT_DAYS = 90      # rec_drop: last 90 days vs the same calendar days one year earlier
 MIN_RECENT_DAYS = 20  # rec_drop: at least 20 days on each side
+LIGHT_MONTHS = set(range(3, 11))  # daylight_ratio: March-October vs November-February
 
 FEATURES = [
     "summer_level",    # 1 median log(midday/night) in summer           (low = PV)
@@ -58,6 +60,7 @@ FEATURES = [
     "weekend_summer",  # 8 summer_level on Sat-Sun only                 (low = PV)
     "dip_spread",      # 9 p90 - p10 of daily dip in summer: PV dip comes and goes with clouds (high = PV)
     "rec_drop",        # 10 dip one year earlier minus dip in the last 90 days: new PV (high = PV)
+    "daylight_ratio",  # 11 log(08-16 UTC / night): median Mar-Oct minus median Nov-Feb (low = PV)
 ]
 
 # Used only if artifacts/detect_params.json is missing (placeholder, not tuned)
@@ -137,6 +140,8 @@ def features_from_daily(d: pd.DataFrame) -> dict:
     prev = (d["date"] > end - pd.Timedelta(days=365 + RECENT_DAYS)) & (d["date"] <= end - pd.Timedelta(days=365))
     ok = dip[rec].notna().sum() >= MIN_RECENT_DAYS and dip[prev].notna().sum() >= MIN_RECENT_DAYS
     f["rec_drop"] = float(dip[prev].median() - dip[rec].median()) if ok else nan
+    light = log_ratio(d["daylight"], d["night"])
+    f["daylight_ratio"] = med(light, month.isin(LIGHT_MONTHS)) - med(light, ~month.isin(LIGHT_MONTHS))
     return f
 
 
