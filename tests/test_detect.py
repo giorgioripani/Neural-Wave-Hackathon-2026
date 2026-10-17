@@ -34,6 +34,24 @@ def test_dip_spread_nan_without_summer():
     assert np.isnan(detect.features_from_daily(d)["dip_spread"])
 
 
+def test_rec_drop_positive_when_dip_appears_recently():
+    d = _daily(days=500)
+    d.loc[d.index[-60:], "midday"] = 0.1  # midday halves in the last 60 days
+    assert detect.features_from_daily(d)["rec_drop"] > 0.5
+    assert detect.features_from_daily(_daily(days=500))["rec_drop"] == 0.0
+
+
+def test_rec_drop_nan_with_less_than_one_year():
+    assert np.isnan(detect.features_from_daily(_daily(days=300))["rec_drop"])
+
+
+def test_apply_recent_only_adds_pv():
+    proba = pd.Series([0.9, 0.2, 0.2])
+    x = pd.Series([0.0, 1.0, np.nan])
+    out = detect.apply_recent(proba, x, sign=1, threshold=0.12, scale=0.05)
+    assert out[0] == 0.9 and out[1] > 0.5 and out[2] < 0.5
+
+
 def test_features_have_all_keys():
     f = detect.features_from_daily(_daily())
     assert list(f) == detect.FEATURES

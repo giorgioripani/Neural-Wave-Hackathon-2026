@@ -25,3 +25,6 @@ FEATURES PER CAPIRE LA PRESENZA DI UN PV - FLAVIO
 18	Logistic regression: dip_spread + dip_summer / weekend_summer / dip_season / clamp (C=1 and 0.1)	0.842-0.872	-	0-1	5-6	Rejected: more FN than dip_spread alone
 19	OR rule: dip_spread high OR dip_summer very low (both thresholds fitted in LOO)	0.864	19	3	3	Rejected: second threshold unstable across folds
 20	Agent (Claude Code, 2026-10-17): proposed and tested features 16-19 on per-window aggregates only; remaining FN are large plants (166, 178, 959 kWp), one installed 75 days before data end
+21	Second pass rec_drop (dip one year earlier minus dip in last 90 days), only on customers dip_spread calls no-PV	0.952	20	0	2	Kept: finds the 178 kWp plant installed 75 days before data end; stage-2 threshold stable 0.12-0.14 in LOO; no-PV max 0.05 vs threshold 0.12
+22	Size normalisation: dip_spread divided by morning/afternoon spread (spread_norm); kWh dip spread / median shoulder kWh (spread_kwh)	0.878 / 0.696	18 / 16	1 / 8	4 / 6	Rejected: worse than dip_spread (log ratio is already size-free)
+23	Agent (Claude Code, 2026-10-17): tested features 21-22 on per-window aggregates; checked new vs committed predict() end to end (0.927 -> 0.952)

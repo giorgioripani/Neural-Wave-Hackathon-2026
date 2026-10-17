@@ -121,6 +121,23 @@ def loo_logistic(win: pd.DataFrame, last: pd.DataFrame, cols: list[str]) -> np.n
     return pred
 
 
+RECENT = "rec_drop"     # second pass, only on customers the MAIN rule calls 'no PV'
+
+
+def fit_recent(tr: pd.DataFrame) -> tuple[int, float, int, float]:
+    """MAIN rule on all windows, then RECENT rule on the windows MAIN calls negative.
+    Returns (sign1, t1, sign2, t2)."""
+    s1, t1, _ = fit_rule(tr[MAIN].to_numpy(float), tr["y"].to_numpy(bool))
+    neg = tr[~(np.nan_to_num(s1 * (tr[MAIN].to_numpy(float) - t1), nan=-1.0) > 0)]
+    s2, t2, _ = fit_rule(neg[RECENT].to_numpy(float), neg["y"].to_numpy(bool))
+    return s1, t1, s2, t2
+
+
+def recent_decide(xm, xr, s1, t1, s2, t2):
+    """PV if the MAIN rule says PV OR the RECENT rule says PV (NaN -> no)."""
+    return (np.nan_to_num(s1 * (xm - t1), nan=-1.0) > 0) | (np.nan_to_num(s2 * (xr - t2), nan=-1.0) > 0)
+
+
 def main() -> int:
     df = pd.read_parquet(SERIES, columns=["customer_id", "energy_consumption_kwh", "timestamp_epoch"])
     df["customer_id"] = df["customer_id"].astype(str)
@@ -166,12 +183,23 @@ def main() -> int:
                                      sign, t, band)[0]
     tb_f1 = f1(y_last, tb_pred)
 
+    # MAIN rule + RECENT second pass (both thresholds fitted inside LOO)
+    rc_pred = np.zeros(len(last), dtype=bool)
+    for i, cid in enumerate(last.index):
+        th = fit_recent(win[win["customer_id"] != cid])
+        rc_pred[i] = recent_decide(np.array([last.at[cid, MAIN]]), np.array([last.at[cid, RECENT]]), *th)[0]
+    rc_f1 = f1(y_last, rc_pred)
+
     # Final params on all windows: tiebreaker only if it beats the main feature alone in LOO
     sign, t, band = fit_tiebreak(win[MAIN].to_numpy(float), win[TIE].to_numpy(float), win["y"].to_numpy(bool))
     params = {"feature": MAIN, "sign": sign, "threshold": t,
               "scale": float(max(np.nanstd(win[MAIN].to_numpy(float)) / 4, 1e-3))}
     if tb_f1 > sc.at[MAIN, "loo_f1"]:
         params["tiebreak"] = {"feature": TIE, "min": detect.CLAMP_MIN, "band": band}
+    if rc_f1 > sc.at[MAIN, "loo_f1"]:
+        _, _, s2, t2 = fit_recent(win)
+        params["recent"] = {"feature": RECENT, "sign": s2, "threshold": t2,
+                            "scale": float(max(np.nanstd(win[RECENT].to_numpy(float)) / 4, 1e-3))}
     detect.ARTIFACTS.mkdir(exist_ok=True)
     detect.PARAMS_PATH.write_text(json.dumps(params, indent=2), encoding="utf-8")
 
@@ -181,6 +209,8 @@ def main() -> int:
         print(f"{feat:15s} alone      LOO F1 {r.loo_f1:.3f}  TP {int(r.tp):2d} FP {int(r.fp):2d} FN {int(r.fn):2d}")
     tp, fp, fn = int((y_last & tb_pred).sum()), int((~y_last & tb_pred).sum()), int((y_last & ~tb_pred).sum())
     print(f"{MAIN} + {TIE} tiebreak  LOO F1 {tb_f1:.3f}  TP {tp:2d} FP {fp:2d} FN {fn:2d}")
+    tp, fp, fn = int((y_last & rc_pred).sum()), int((~y_last & rc_pred).sum()), int((y_last & ~rc_pred).sum())
+    print(f"{MAIN} -> {RECENT} second pass  LOO F1 {rc_f1:.3f}  TP {tp:2d} FP {fp:2d} FN {fn:2d}")
     print(f"LOO grey-zone band: min {min(tb_bands):.3f} median {np.median(tb_bands):.3f} max {max(tb_bands):.3f}")
     for combo in COMBOS:
         p = loo_logistic(win, last, combo)

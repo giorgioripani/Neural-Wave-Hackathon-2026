@@ -42,6 +42,8 @@ MIN_SEG_DAYS = 30     # step: each side of the change point lasts >= 30 days
 CLAMP_MIN = 0.05      # tiebreaker: clamp counts only if >= 5% of summer days clamp
 SPREAD_Q = (0.1, 0.9) # dip_spread: quantiles of the daily summer dip (sunny vs cloudy days)
 MIN_SUMMER_DAYS = 10  # dip_spread / var_summer need at least 10 summer days
+RECENT_DAYS = 90      # rec_drop: last 90 days vs the same calendar days one year earlier
+MIN_RECENT_DAYS = 20  # rec_drop: at least 20 days on each side
 
 FEATURES = [
     "summer_level",    # 1 median log(midday/night) in summer           (low = PV)
@@ -55,6 +57,7 @@ FEATURES = [
     "duck",            # 7 log(evening/early_aft): summer minus winter  (high = PV)
     "weekend_summer",  # 8 summer_level on Sat-Sun only                 (low = PV)
     "dip_spread",      # 9 p90 - p10 of daily dip in summer: PV dip comes and goes with clouds (high = PV)
+    "rec_drop",        # 10 dip one year earlier minus dip in the last 90 days: new PV (high = PV)
 ]
 
 # Used only if artifacts/detect_params.json is missing (placeholder, not tuned)
@@ -129,6 +132,11 @@ def features_from_daily(d: pd.DataFrame) -> dict:
     dip_s = dip[summer].dropna()
     f["dip_spread"] = (float(dip_s.quantile(SPREAD_Q[1]) - dip_s.quantile(SPREAD_Q[0]))
                        if len(dip_s) >= MIN_SUMMER_DAYS else nan)
+    end = d["date"].max()
+    rec = d["date"] > end - pd.Timedelta(days=RECENT_DAYS)
+    prev = (d["date"] > end - pd.Timedelta(days=365 + RECENT_DAYS)) & (d["date"] <= end - pd.Timedelta(days=365))
+    ok = dip[rec].notna().sum() >= MIN_RECENT_DAYS and dip[prev].notna().sum() >= MIN_RECENT_DAYS
+    f["rec_drop"] = float(dip[prev].median() - dip[rec].median()) if ok else nan
     return f
 
 
@@ -163,6 +171,11 @@ def apply_tiebreak(proba: pd.Series, x: pd.Series, threshold: float, band: float
     return out
 
 
+def apply_recent(proba: pd.Series, x: pd.Series, sign: int, threshold: float, scale: float) -> pd.Series:
+    """Second pass for recent installations: can only turn 'no PV' into 'PV' (OR rule)."""
+    return np.maximum(proba, proba_from_feature(x, sign, threshold, scale))
+
+
 def predict(df: pd.DataFrame) -> dict[str, float]:
     """Return {customer_id: probability of PV} with exactly one entry per customer."""
     p = load_params()
@@ -172,4 +185,7 @@ def predict(df: pd.DataFrame) -> dict[str, float]:
     if tb and tb["band"] > 0:
         proba = apply_tiebreak(proba, feat[p["feature"]], p["threshold"], tb["band"],
                                feat[tb["feature"]], tb["min"])
+    rc = p.get("recent")
+    if rc:
+        proba = apply_recent(proba, feat[rc["feature"]], rc["sign"], rc["threshold"], rc["scale"])
     return {str(k): float(v) for k, v in proba.items()}
