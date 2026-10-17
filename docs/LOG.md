@@ -146,3 +146,26 @@ Prova finale della data (regola fissata prima). Serie intera: v2 0,617 (mediana 
 
 Risposta degli organizzatori (sabato 15:30): il test copre il periodo 2022–2025 come i dati di sviluppo, già filtrato sui POD; in precedenza: nessuna installazione prima del 2022 nei dati etichettati. Quindi il protocollo di riferimento è la serie intera: resta la v2 (D 0,617, mediana 1,5 gg, 6/22 oltre 30 gg). Il raffinamento locale, migliore solo con serie tagliate a 2 anni, non viene adottato. Da correggere nel CLAUDE.md l’indicazione “test di circa 2 anni”.
 - 2026-10-17 Giorgio (agente Claude Code): merge finale su merge/finale e poi main (f82db85, tag v2-consegna) di 5 branch con controlli dopo ogni merge (test, check_env, uscite su fake_test a 2 anni identiche byte per byte); un solo lettore del test (load_test), da fix/bug-fixes portati i controlli di call_date/call_capacity; detect con crash -> NaN (riserva TRUE); fake_test e LOO passati alla serie intera (LOO tutto_loo 78,49, F1 0,905, D 0,665, P 0,452; a 2 anni 77,93 ± 2,42).
+
+## 17/10 - Pseudo-etichette sui 1147 clienti senza etichetta (Giorgio, con agente Claude Code)
+Controllo della regola di main (artifacts/detect_params.json) sulla serie intera, python -m src.eval.unlabelled_sanity:
+
+| | senza etichetta (1147) | dev PV (22) | dev no PV (18) |
+| --- | --- | --- | --- |
+| PV previsti dalla regola | 385 (33,6%) | dev: 20/40 previsti, 22/40 veri | |
+| n_days q10 / mediana | 1158 / 1462 | 1462 / 1462 | (dev insieme) |
+| primo giorno | 2021-12-31..2025-09-03 | 2021-12-31..2025-06-13 | |
+| ultimo giorno | 2024-07-16..2025-12-31 | 2025-12-31 | |
+| dip_spread q10/q50/q90 | 0,17 / 0,49 / 4,80 | 0,45 / 6,70 / 7,98 | 0,10 / 0,34 / 0,64 |
+| rec_drop q10/q50/q90 | -0,11 / 0,00 / 0,14 | -0,23 / 0,01 / 0,43 | -0,06 / 0,00 / 0,03 |
+
+Pseudo-etichette annidate nel LOO (python -m src.eval.loo_pseudo, serie intera, capacity come tutto_loo). Maestri addestrati sulle finestre di 2 anni dei 39 (come run_detect): regola dip_spread -> rec_drop, LR (dip_spread, rec_drop, drop, step; StandardScaler, L2, balanced), albero d2 leaf5 balanced (scelto a priori, solo voto). Applicati alle feature sulla serie intera dei senza etichetta (1145 con feature complete). Studente LR, peso 0,3 alle pseudo-etichette.
+
+| modo | punteggio | F1 | D | P | TP/FP/FN | pseudo TRUE / FALSE per giro | vs regola | bootstrap diff. 5-95% |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| regola (main) | 78,49 | 0,905 | 0,665 | 0,452 | 19/1/3 | - | - | - |
+| LR senza pseudo | 78,70 | 0,900 | 0,702 | 0,461 | 18/0/4 | - | 1 FP corretto, 1 nuovo FN | [-3,95; +4,56] |
+| studente 0,9/0,1 | 78,70 | 0,900 | 0,702 | 0,461 | 18/0/4 | 126-144 / 40-102 | idem | [-3,95; +4,56] |
+| studente 0,95/0,05 | 78,70 | 0,900 | 0,702 | 0,461 | 18/0/4 | 109-119 / 8-23 | idem | [-3,95; +4,56] |
+
+Scartato: lo studente prende sui 40 clienti del dev le stesse decisioni della LR senza pseudo-etichette; +0,21 contro la regola, dentro il rumore (un cliente in piu o in meno sposta 2-4 punti). inference.py e artifacts/ invariati.
