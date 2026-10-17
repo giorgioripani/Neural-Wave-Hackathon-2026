@@ -122,3 +122,8 @@ Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova m
 Agente usato per scrivere src/eval/loo_pipeline.py: pipeline di inference.py dentro validate.py (2 anni, 5 giri, seed 42).
 Artefatti attuali 79,19 ± 2,92; soglie detect ricalcolate senza il cliente 78,10 ± 2,42; detect e capacity ricalcolati 77,93 ± 2,42 (F1 0,909, D 0,608, P 0,439). La perdita per l'in-sample è piccola (circa 1,3 punti).
 Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo (dip_spread + rec_drop, geo_b), fatta guardando tutti i 40 clienti. Neanche date.py v2 è stato scelto in LOO.
+## 17/10 — Revisione di main (Francesco, con agente Claude)
+Agente usato per la revisione del codice di main (09d3ab3), i test di integrazione e i casi limite su dati sintetici. Correzioni nel branch fix/bug-fixes, proposte in IMPROVEMENTS.md.
+Bug corretti in inference.py: crash con un timestamp_epoch vuoto; crash e zeri persi con intestazione con spazi e id numerici; duplicati non tolti (diverso da load_series); data "NaT" e kWp inf accettati. Uscite sul test finto identiche a main.
+Scartata: se refine_date0 dice pv_gia_presente, ristimare la data sul tratto prima di date0. D sul test finto da 0,372 a 0,338; usare il primo giorno della serie dà lo stesso 0,338.
+Misura per il report: LOO tutto_loo con finestre "ultimi 2 anni" 78,20 (F1 0,952, D 0,372, P 0,436) contro 77,93 (D 0,608) con la data vera nel 10-90% della finestra. Nel dev 9 clienti su 22 con PV hanno l'installazione prima degli ultimi 2 anni.
