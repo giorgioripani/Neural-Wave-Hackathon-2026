@@ -51,7 +51,8 @@ def read_test(path: Path) -> pd.DataFrame:
     kwh = df["energy_consumption_kwh"]
     if kwh.dtype == object:  # decimale con la virgola
         kwh = pd.to_numeric(kwh.str.replace(",", ".", regex=False), errors="coerce")
-    df["energy_consumption_kwh"] = kwh.astype(float)
+    # Regola del team: kWh negativi (errori di misura) -> 0; righe tenute, NaN lasciati NaN.
+    df["energy_consumption_kwh"] = kwh.astype(float).clip(lower=0)
     df["customer_id"] = df["customer_id"].str.strip()
     df = df.sort_values(["customer_id", "timestamp_epoch"], kind="stable").reset_index(drop=True)
     df["kwh"] = df["energy_consumption_kwh"]

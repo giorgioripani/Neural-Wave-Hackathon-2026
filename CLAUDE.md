@@ -29,6 +29,7 @@ Consegna: domenica 18 ottobre, ore 11:00. `python inference.py path/test.csv` de
   `python src/loading/prepare_data.py <csv> data/clean/<nome>.parquet`. Il file da 7,9 GB va letto a blocchi (`chunksize`) o con Polars/DuckDB: non caricarlo intero in memoria.
 - In `inference.py` NON scartare nessun cliente: una riga di output per ogni `customer_id` del test.
 - Ora legale: esistono giorni da 92 e da 100 misure. Ordinare con `timestamp_epoch`. Mai assumere 96 righe al giorno.
+- kWh negativi (errori di misura, rarissimi): si mettono a 0, senza togliere righe. Lo fa gia` `inference.py` in lettura; nello sviluppo lo fa il caricamento di Andrea. kWh mancanti (NaN): lasciarli NaN e usare medie/mediane che li ignorano, MAI riempirli con 0.
 - `customer_id` sempre come stringa. Dati fuori da Git (`data/` è nel `.gitignore`).
 - Curve senza etichetta: NON sono esempi di "no", possono avere il fotovoltaico. Pseudo-etichette permesse: solo previsioni molto sicure, e la valutazione si fa SOLO sui 40 clienti etichettati.
 
