@@ -92,8 +92,13 @@ def warn(what: str, cid: str, e: Exception) -> None:
 
 def call_detect(mod, df: pd.DataFrame) -> dict:
     """detect.predict(serie di tutti i clienti) -> {customer_id: probabilita`}."""
-    probs = mod.predict(df)
-    return {str(k): float(v) for k, v in dict(probs).items()}
+    out = {}
+    for k, v in dict(mod.predict(df)).items():
+        try:
+            out[str(k)] = float(v)
+        except (TypeError, ValueError):
+            out[str(k)] = float("nan")  # valore illeggibile: come un cliente mancante
+    return out
 
 
 def call_date(mod, series: pd.DataFrame) -> str:
@@ -122,17 +127,26 @@ def predict_all(df: pd.DataFrame) -> list[dict]:
     customers = df["customer_id"].dropna().unique().tolist()
     detect, date_mod, capacity = load_module("detect"), load_module("date"), load_module("capacity")
 
-    probs = {}
+    # Riserva di detect: TRUE per tutti (sul dev "tutti TRUE" vale 57,8 punti, "tutti FALSE" 0).
+    probs = None
     if detect is not None:
         try:
             probs = call_detect(detect, df)
         except Exception as e:
             warn("detect", "*", e)
+    if probs is None:
+        print("[riserva] detect non disponibile: tutti TRUE")
+        probs = {}
+    else:
+        n_missing = sum(1 for c in customers if pd.isna(probs.get(c)))
+        if n_missing:
+            print(f"[riserva] detect: {n_missing} clienti senza probabilita', messi TRUE")
 
     rows = []
     for cid, series in df.groupby("customer_id", sort=False):
         row = {"customer_id": cid, "pv_installed": False, "pv_installation_date": "", "pv_capacity_kwp": ""}
-        if probs.get(cid, 0.0) >= PV_THRESHOLD:
+        p = probs.get(cid)
+        if pd.isna(p) or p >= PV_THRESHOLD:
             row["pv_installed"] = True
             date = None
             if date_mod is not None:
