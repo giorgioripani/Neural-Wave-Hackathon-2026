@@ -12,7 +12,8 @@ WINDOW_DAYS si usa tutta la serie. Nessun parametro scelto sui risultati.
 Uso (dalla radice del repo):
     python src/models/run_date_dev.py [--series data/clean/dev.parquet]
         [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3|v4] [--refine]
-        [--compare-agg] [--compare-refined]
+        [--compare-agg] [--compare-refined] [--protocol windows|last730|full] [--nested-all]
+        [--compare-final]
 
 --method di default: v2, il metodo usato da inference.py (date.estimate).
 v1, v2, v3 si confrontano fra loro; v4 (v2 + secondo gradino) solo con v2.
@@ -27,6 +28,22 @@ parita` vince all) e quante volte e` stata scelta ciascuna variante.
 Salva outputs/date_dev_agg.csv (una riga per cliente).
 --compare-refined: stesse statistiche fra v2 e date.estimate_refined (a parita`
 vince v2); salva outputs/date_dev_refined.csv.
+--protocol last730: una sola finestra per cliente, gli ultimi 730 giorni dei suoi
+dati (ts_epoch > ultimo ts_epoch - 730 giorni, come demo/make_fake_test.py), anche
+se la data vera cade prima. Stampa D medio, mediana dell'errore, clienti oltre 30
+giorni e i clienti con la data vera prima della finestra (con il loro D a parte).
+Default: windows (le tre finestre sopra).
+--protocol full: una sola finestra per cliente, l'intera serie disponibile.
+--compare-final (con --protocol windows, last730 o full): candidate v2, refined,
+v2_refine e refined_refine (FINAL); *_refine applica extensions.refine_date0 sulla
+serie della STESSA finestra usata per la stima. Per ogni candidata diversa da v2:
+D medio, migliorati/peggiorati rispetto a v2 di piu` di AGG_MARGIN_DAYS giorni,
+differenza di D con intervallo bootstrap al 90% (BOOT_REPS ricampionamenti dei
+clienti, seed 42, gli stessi per tutte); poi selezione annidata LOCO fra le quattro
+(a parita` vince v2) e scelte. Salva outputs/date_dev_final_<protocollo>.csv.
+--nested-all: D per cliente per tutte le versioni (NESTED_ALL) con il protocollo
+scelto; stampa il D della selezione annidata leave-one-customer-out (a parita`
+vince la v2) e le scelte. Si puo` usare insieme a --protocol last730.
 --refine: dopo il metodo scelto si applica extensions.refine_date0 sulla serie
 della finestra (solo al metodo scelto); si confronta anche con lo stesso metodo
 senza refine ("raw") e si stampa il conteggio dei motivi.
@@ -134,8 +151,8 @@ def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS,
                   "diff": float(diff.mean()), "ci": tuple(float(q) for q in np.percentile(boot, BOOT_CI))}
     chosen, nested = [], []
     for j in range(n):
-        others = np.delete(D, j, axis=0).mean(axis=0)
-        k = int(np.argmax(others))  # argmax tiene il primo massimo: a parita` vince il riferimento
+        # con un solo cliente non ci sono "altri": si tiene il riferimento
+        k = int(np.argmax(np.delete(D, j, axis=0).mean(axis=0))) if n > 1 else 0  # argmax tiene il primo massimo: a parita` vince il riferimento
         chosen.append(variants[k])
         nested.append(D[j, k])
     res["nested"] = float(np.mean(nested))
@@ -171,6 +188,175 @@ def run_compare_agg(pos_lab: pd.DataFrame, groups: dict, out: str) -> int:
     return run_compare(pos_lab, groups, out, AGG_METHODS)
 
 
+LAST_WINDOW_S = 730 * 86400  # stessa regola di demo/make_fake_test.py
+# --nested-all: la v2 e` la prima, cosi` a parita` vince lei
+NESTED_ALL = {"v2": estimate_v2, "v1": estimate_v1, "v3": estimate_v3, "v4": estimate_v4,
+              "weekdays": AGG_METHODS["weekdays"], "weekly_median": AGG_METHODS["weekly_median"],
+              "refined": estimate_refined}
+
+
+def last730_daily(series: pd.DataFrame) -> pd.DataFrame:
+    """Serie a 15 minuti di un cliente -> daily_midday_ratio degli ultimi 730 giorni."""
+    cut = series[series["ts_epoch"] > series["ts_epoch"].max() - LAST_WINDOW_S]
+    return daily_midday_ratio(cut)
+
+
+def evaluate_last730(daily: pd.DataFrame, true_date, method=estimate) -> dict:
+    """daily: gia` ritagliato con last730_daily. -> una riga con pred_date, err_days,
+    score e true_before (data vera prima del primo giorno della finestra)."""
+    t = pd.Timestamp(true_date).normalize()
+    dates = pd.to_datetime(daily["date"])
+    row = {"true_date": t.date(), "n_days": len(daily), "pred_date": "", "err_days": np.nan, "score": 0.0,
+           "win_start": dates.min().date() if len(daily) else None,
+           "true_before": bool(len(daily) and t < dates.min())}
+    if len(daily) > 0:
+        pred = method(daily)
+        row.update(pred_date=pred, err_days=(pd.Timestamp(pred) - t).days, score=date_score(pred, t))
+    return row
+
+
+def protocol_rows(daily: pd.DataFrame, true_date, method, protocol: str) -> list:
+    """Righe di risultato del cliente con il protocollo dato (windows, last730, full).
+    Con last730 e full daily e` gia` la finestra unica."""
+    if protocol in ("last730", "full"):
+        return [evaluate_last730(daily, true_date, method)]
+    return evaluate_customer(daily, true_date, method=method)
+
+
+def last730_summary(res: pd.DataFrame) -> dict:
+    """res: una riga per cliente (score, err_days, true_before)."""
+    before = res["true_before"].astype(bool)
+    err = res["err_days"].abs()
+    return {"n": len(res), "D": float(res["score"].mean()), "med_err": float(err.median()),
+            "over30": int((err.isna() | (err > 30)).sum()), "n_before": int(before.sum()),
+            "D_before": float(res.loc[before, "score"].mean()) if before.any() else np.nan,
+            "D_inside": float(res.loc[~before, "score"].mean()) if (~before).any() else np.nan}
+
+
+def nested_all(per_cust: pd.DataFrame, methods=NESTED_ALL) -> dict:
+    """Selezione annidata LOCO su tutte le versioni (la prima vince a parita`)."""
+    r = compare_agg(per_cust, variants=tuple(methods), reps=1)
+    return {"nested": r["nested"], "chosen": r["chosen"]}
+
+
+def run_protocol(a, pos_lab: pd.DataFrame, groups: dict) -> int:
+    """--protocol last730 o full, e/o --nested-all."""
+    methods = NESTED_ALL if a.nested_all else {}
+    rows, per_cust = [], []
+    for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
+        if cid not in groups:  # come nel protocollo principale: D = 0
+            rows.append({"customer_id": cid, "true_date": true_date.date(), "n_days": 0, "score": 0.0,
+                         "err_days": np.nan, "true_before": False})
+            per_cust.append({"customer_id": cid, **{f"D_{m}": 0.0 for m in methods}, **{f"err_{m}": np.nan for m in methods}})
+            continue
+        if a.protocol in ("last730", "full"):
+            daily = last730_daily(groups[cid]) if a.protocol == "last730" else daily_midday_ratio(groups[cid])
+            rows.append({"customer_id": cid, **evaluate_last730(daily, true_date, METHODS[a.method])})
+        else:
+            daily = daily_midday_ratio(groups[cid])
+        pc = {"customer_id": cid}
+        for m, fn in methods.items():
+            r = protocol_rows(daily, true_date, fn, a.protocol)
+            err = pd.Series([x["err_days"] for x in r], dtype=float).abs()
+            pc[f"D_{m}"] = float(np.mean([x["score"] for x in r]))
+            pc[f"err_{m}"] = float(err.mean()) if err.notna().any() else np.nan
+        per_cust.append(pc)
+    tag = f"{a.protocol}{'_nested' if a.nested_all else ''}"
+    out = Path(a.out or f"outputs/date_dev_{tag}.csv")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if a.protocol in ("last730", "full"):
+        res = pd.DataFrame(rows)
+        res.to_csv(out, index=False)
+        sm = last730_summary(res)
+        print(f"Protocollo {a.protocol}, metodo {a.method}: clienti {sm['n']}, D medio {sm['D']:.3f}, "
+              f"mediana errore {sm['med_err']:.1f} gg, oltre 30 gg {sm['over30']}")
+        print(f"Data vera prima della finestra: {sm['n_before']} clienti, D medio {sm['D_before']:.3f} "
+              f"(gli altri: {sm['D_inside']:.3f})")
+    if a.nested_all:
+        pc = pd.DataFrame(per_cust)
+        pc.to_csv(out.with_name(out.stem + "_per_version.csv"), index=False)
+        r = nested_all(pc)
+        print(f"Selezione annidata LOCO su tutte ({a.protocol}): D {r['nested']:.3f}; D medio v2 "
+              f"{pc['D_v2'].mean():.3f}")
+        print("Scelte: " + ", ".join(f"{m} {c}" for m, c in r["chosen"].items()))
+    return 0
+
+
+FINAL = {"v2": (estimate_v2, False), "refined": (estimate_refined, False),
+         "v2_refine": (estimate_v2, True), "refined_refine": (estimate_refined, True)}
+
+
+def protocol_windows(series: pd.DataFrame, true_date, protocol: str) -> list:
+    """Serie a 15 minuti di un cliente -> [(daily della finestra, serie della finestra)].
+    windows: le finestre di evaluate_customer (stesse date); last730: ultimi 730
+    giorni; full: tutta la serie."""
+    if protocol == "full":
+        return [(daily_midday_ratio(series), series)]
+    if protocol == "last730":
+        cut = series[series["ts_epoch"] > series["ts_epoch"].max() - LAST_WINDOW_S]
+        return [(daily_midday_ratio(cut), cut)]
+    daily = daily_midday_ratio(series)
+    dates = pd.to_datetime(daily["date"])
+    t = pd.Timestamp(true_date).normalize()
+    first, end = dates.min(), dates.max() + pd.Timedelta(days=1)
+    ts = pd.to_datetime(series["ts_epoch"], unit="s")
+    out = []
+    for pos in POSITIONS:
+        start, stop = window(first, end, t, pos, WINDOW_DAYS)
+        out.append((daily[(dates >= start) & (dates < stop)], series[((ts >= start) & (ts < stop)).to_numpy()]))
+    return out
+
+
+def final_per_customer(series: pd.DataFrame, true_date, protocol: str, candidates=FINAL) -> dict:
+    """D del cliente (media delle finestre) ed errore assoluto medio per ogni candidata.
+    La stima di base si calcola una volta per finestra; refine_date0 usa la serie
+    della stessa finestra."""
+    t = pd.Timestamp(true_date).normalize()
+    scores = {c: [] for c in candidates}
+    errs = {c: [] for c in candidates}
+    for daily_w, series_w in protocol_windows(series, true_date, protocol):
+        base = {}
+        for c, (fn, refine) in candidates.items():
+            if len(daily_w) == 0:
+                scores[c].append(0.0)
+                errs[c].append(np.nan)
+                continue
+            if fn not in base:
+                base[fn] = fn(daily_w)
+            pred = refine_date0(series_w, base[fn])[0] if refine else base[fn]
+            scores[c].append(date_score(pred, t))
+            errs[c].append(abs((pd.Timestamp(pred) - t).days))
+    out = {}
+    for c in candidates:
+        e = pd.Series(errs[c], dtype=float)
+        out[f"D_{c}"] = float(np.mean(scores[c]))
+        out[f"err_{c}"] = float(e.mean()) if e.notna().any() else np.nan
+    return out
+
+
+def run_compare_final(pos_lab: pd.DataFrame, groups: dict, protocol: str, out: str | None) -> int:
+    names = tuple(FINAL)
+    rows = []
+    for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
+        if cid not in groups:  # come nel protocollo principale: D = 0
+            rows.append({"customer_id": cid, **{f"D_{c}": 0.0 for c in names}, **{f"err_{c}": np.nan for c in names}})
+            continue
+        rows.append({"customer_id": cid, **final_per_customer(groups[cid], true_date, protocol)})
+    per_cust = pd.DataFrame(rows)
+    path = Path(out or f"outputs/date_dev_final_{protocol}.csv")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    per_cust.to_csv(path, index=False)
+    r = compare_agg(per_cust, variants=names)  # stessi ricampionamenti per tutte le candidate
+    print(f"Protocollo {protocol}: clienti {len(per_cust)}, D medio v2 {r['mean']['v2']:.3f}")
+    for c in names[1:]:
+        lo, hi = r[c]["ci"]
+        print(f"{c}: D {r['mean'][c]:.3f}, migliorati {r[c]['better']}, peggiorati {r[c]['worse']} "
+              f"(> {AGG_MARGIN_DAYS} gg vs v2), diff D {r[c]['diff']:+.3f}, IC 90% [{lo:+.3f}, {hi:+.3f}]")
+    print(f"Selezione annidata LOCO: D {r['nested']:.3f}; scelte: "
+          + ", ".join(f"{c} {k}" for c, k in r["chosen"].items()))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--series", default="data/clean/dev.parquet")
@@ -180,7 +366,15 @@ def main() -> int:
     ap.add_argument("--refine", action="store_true", help="applica refine_date0 dopo il metodo")
     ap.add_argument("--compare-agg", action="store_true", help="confronto di estimate_cfg: all, weekdays, weekly_median")
     ap.add_argument("--compare-refined", action="store_true", help="confronto fra v2 ed estimate_refined")
+    ap.add_argument("--protocol", choices=["windows", "last730", "full"], default="windows",
+                    help="windows: tre finestre (default); last730: ultimi 730 giorni; full: serie intera")
+    ap.add_argument("--nested-all", action="store_true", help="selezione annidata LOCO su tutte le versioni")
+    ap.add_argument("--compare-final", action="store_true", help="v2, refined, v2_refine, refined_refine")
     a = ap.parse_args()
+    if a.compare_final and (a.refine or a.compare_agg or a.compare_refined or a.nested_all):
+        ap.error("--compare-final non si combina con --refine, --compare-agg, --compare-refined, --nested-all")
+    if (a.protocol != "windows" or a.nested_all) and (a.refine or a.compare_agg or a.compare_refined):
+        ap.error("--protocol last730/full e --nested-all non si combinano con --refine, --compare-agg, --compare-refined")
     np.random.seed(SEED)
     out = a.out or f"outputs/date_dev_{a.method}{'_refine' if a.refine else ''}.csv"
     others = COMPARE[a.method] + (["raw"] if a.refine else [])
@@ -189,6 +383,10 @@ def main() -> int:
     pos_lab = lab[lab["pv_installed"] & lab["pv_installation_date"].notna()]
     series = load_series(a.series, customers=pos_lab["customer_id"].tolist())
     groups = dict(tuple(series.groupby("customer_id", sort=False)))
+    if a.compare_final:
+        return run_compare_final(pos_lab, groups, a.protocol, a.out)
+    if a.protocol != "windows" or a.nested_all:
+        return run_protocol(a, pos_lab, groups)
     if a.compare_agg:
         return run_compare_agg(pos_lab, groups, a.out or "outputs/date_dev_agg.csv")
     if a.compare_refined:
