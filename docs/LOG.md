@@ -122,3 +122,5 @@ Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova m
 Agente usato per scrivere src/eval/loo_pipeline.py: pipeline di inference.py dentro validate.py (2 anni, 5 giri, seed 42).
 Artefatti attuali 79,19 ± 2,92; soglie detect ricalcolate senza il cliente 78,10 ± 2,42; detect e capacity ricalcolati 77,93 ± 2,42 (F1 0,909, D 0,608, P 0,439). La perdita per l'in-sample è piccola (circa 1,3 punti).
 Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo (dip_spread + rec_drop, geo_b), fatta guardando tutti i 40 clienti. Neanche date.py v2 è stato scelto in LOO.
+
+Risposta degli organizzatori (sabato 15:30): il test copre il periodo 2022–2025 come i dati di sviluppo, già filtrato sui POD; in precedenza: nessuna installazione prima del 2022 nei dati etichettati. Quindi il protocollo di riferimento è la serie intera: resta la v2 (D 0,617, mediana 1,5 gg, 6/22 oltre 30 gg). Il raffinamento locale, migliore solo con serie tagliate a 2 anni, non viene adottato. Da correggere nel CLAUDE.md l’indicazione “test di circa 2 anni”.
