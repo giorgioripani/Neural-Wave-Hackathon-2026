@@ -342,3 +342,9 @@ def test_dirty_synthetic_csv(tmp_path, monkeypatch):
         assert pv in ("TRUE", "FALSE")
         assert (date == "" and kwp == "") if pv == "FALSE" else (len(date) == 10 and float(kwp) > 0)
     assert (tmp_path / "pv_extensions_predictions.csv").read_text(encoding="utf-8").startswith(EXT_HEADER)
+    # cliente con sole righe non valide: TRUE con il primo giorno del file e kWp > 0, mai campi vuoti
+    import math
+    import re
+    _, pv, date, kwp = next(line.split(";") for line in pred[1:] if line.startswith("BADONLY;"))
+    assert pv == "TRUE" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) and date == "2024-01-01"
+    assert float(kwp) > 0 and math.isfinite(float(kwp))
