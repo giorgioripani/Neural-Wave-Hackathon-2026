@@ -15,9 +15,12 @@ rapporto) su costante + sin/cos + un gradino all'installazione (s1) e uno per og
 estensione (s2, s3); kwp_after = kwp0 * (s1 + s2 [+ s3]) / s1, limitato fra
 KWP_MIN_FACTOR e KWP_MAX_FACTOR volte kwp0. s = calo dei prelievi (positivo).
 """
+import math
+
 import numpy as np
 import pandas as pd
 
+from src.models import detect
 from src.models.date import (EPS_KWH, INTERVALS_PER_HOUR, MAX_MISSING_FRAC, MIDDAY_UTC_HOURS,
                              MIN_SEGMENT_DAYS, YEAR_DAYS, daily_midday_ratio)
 
@@ -91,7 +94,8 @@ def _kwp_ratio(daily: pd.DataFrame, step_dates: list) -> list:
     if "midday_kwh" not in daily.columns:
         return [np.nan] * (len(step_dates) - 1)
     d = _clean(daily, ["midday_kwh"])
-    if len(d) < 2 * MIN_SEGMENT_DAYS:
+    if len(d) < 2 * MIN_SEGMENT_DAYS or pd.Timestamp(step_dates[0]) <= d["date"].iloc[0]:
+        # installazione al primo giorno (o prima): il suo gradino non si vede, s1 non stimabile
         return [np.nan] * (len(step_dates) - 1)
     cols = [_seasonal_base(d["date"])]
     cols += [(d["date"] >= pd.Timestamp(t)).to_numpy(float)[:, None] for t in step_dates]
@@ -175,3 +179,49 @@ def top_k(rows: list[dict], k: int = 3) -> list[dict]:
     """Estensioni di tutti i clienti (ogni dict con customer_id e strength) -> le k
     con strength piu` alta, in ordine decrescente (a parita`, ordine di ingresso)."""
     return sorted(rows, key=lambda r: -float(r["strength"]))[: max(k, 0)]
+
+
+REFINE_MIN_DAYS = 120         # tratto prima di date0: almeno 120 giorni
+REFINE_MIN_SUMMER_DAYS = 30   # e almeno 30 giorni fra maggio e agosto
+REFINE_SUMMER = {5, 6, 7, 8}
+# Valore di riserva di detect.proba_from_feature (fillna(0.499)): feature non calcolabile.
+DETECT_MISSING_PROBA = 0.499
+
+
+def refine_date0(series: pd.DataFrame, date0: str) -> tuple[str, str]:
+    """Serie a 15 minuti di UN cliente + date0 stimata -> (data, motivo).
+
+    Il tratto prima di date0 (giorni UTC) va a detect.predict, con lo stesso
+    customer_id. Motivi: tratto_insufficiente (meno di REFINE_MIN_DAYS giorni o meno
+    di REFINE_MIN_SUMMER_DAYS giorni con misure fra maggio e agosto: si tiene date0),
+    detect_incerto (probabilita` NaN o uguale al valore di riserva di detect:
+    si tiene date0), pv_gia_presente (probabilita` > 0,5: primo giorno della serie),
+    pv_assente_prima (si tiene date0)."""
+    kwh_col = "kwh" if "kwh" in series.columns else "energy_consumption_kwh"
+    ts_col = "ts_epoch" if "ts_epoch" in series.columns else "timestamp_epoch"
+    ts = pd.to_datetime(series[ts_col].astype("int64"), unit="s", utc=True)
+    first = ts.min().strftime("%Y-%m-%d")
+    before = (ts < pd.Timestamp(date0, tz="UTC")).to_numpy()
+    if not before.any():
+        return date0, "tratto_insufficiente"
+    tb = ts[before]
+    days = tb[series[kwh_col].notna().to_numpy()[before]].dt.normalize()  # giorni con misure
+    n_summer = days[days.dt.month.isin(REFINE_SUMMER)].nunique()
+    if (tb.max() - tb.min()).days < REFINE_MIN_DAYS or n_summer < REFINE_MIN_SUMMER_DAYS:
+        return date0, "tratto_insufficiente"
+    seg = series[before]
+    cid = str(seg["customer_id"].iloc[0]) if "customer_id" in seg.columns else "cliente"
+    seg = seg.assign(customer_id=cid)
+    p = detect.predict(seg).get(cid, math.nan)
+    if not math.isfinite(p) or abs(p - DETECT_MISSING_PROBA) < 1e-12:
+        return date0, "detect_incerto"
+    return (first, "pv_gia_presente") if p > 0.5 else (date0, "pv_assente_prima")
+
+
+def predict_extensions_refined(series: pd.DataFrame, date0: str, kwp0: float) -> list[dict]:
+    """Come predict_extensions, ma la ricerca parte da refine_date0(series, date0)
+    (il primo giorno se detect vede gia` il fotovoltaico prima di date0). date0 e
+    kwp0 restano quelli dati per il resto della pipeline: la data corretta serve
+    solo come inizio della ricerca (e come gradino d'installazione per i kWp)."""
+    start, _ = refine_date0(series, date0)
+    return predict_extensions(series, start, kwp0)

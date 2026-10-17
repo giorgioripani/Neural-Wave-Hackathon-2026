@@ -9,9 +9,12 @@ poi extensions.estimate_extensions. Nessun parametro scelto sui risultati.
 Uso (dalla radice del repo):
     python src/models/run_ext_dev.py [--series data/clean/dev.parquet]
         [--labels data/pv_labels_dev.csv] [--ext-labels data/pv_extensions_labels_dev.csv]
-        [--out outputs/ext_dev.csv] [--window full|last730] [--min-tail GIORNI]
+        [--out outputs/ext_dev.csv] [--window full|last730] [--min-tail GIORNI] [--refine]
 
 --min-tail: passato a estimate_extensions come min_tail_days (default 0).
+--refine: le estensioni si cercano da date0_ext, motivo = refine_date0(serie, date0)
+(date0 e kwp0 restano quelli di date.estimate e capacity.estimate); si stampa il
+conteggio dei motivi accanto ai clienti analizzati.
 --threshold: miglioramento minimo dell'errore (default EXT_THRESHOLD = 0.05, quello del metodo).
 
 Diagnosi (solo conteggi): clienti per esito della prima ricerca (eccezione con il
@@ -40,7 +43,8 @@ from src.eval.score import load_labels  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models import capacity  # noqa: E402
 from src.models.date import estimate  # noqa: E402
-from src.models.extensions import EXT_THRESHOLD, daily_ext_features, estimate_extensions  # noqa: E402
+from src.models.extensions import (EXT_THRESHOLD, daily_ext_features, estimate_extensions,  # noqa: E402
+                                   refine_date0)
 
 SEED = 42
 MATCH_DAYS = 30
@@ -126,6 +130,7 @@ def main() -> int:
     ap.add_argument("--out", default="outputs/ext_dev.csv")
     ap.add_argument("--window", choices=["full", "last730"], default="last730")
     ap.add_argument("--min-tail", type=int, default=0, help="min_tail_days di estimate_extensions")
+    ap.add_argument("--refine", action="store_true", help="estensioni cercate da refine_date0(serie, date0)")
     ap.add_argument("--threshold", type=float, default=EXT_THRESHOLD, help="soglia (b) di estimate_extensions")
     a = ap.parse_args()
     np.random.seed(SEED)
@@ -146,7 +151,8 @@ def main() -> int:
             daily = daily_ext_features(s)
             date0 = estimate(daily)
             kwp0 = capacity.estimate(s, date0)
-            exts = estimate_extensions(daily, date0, kwp0, min_tail_days=a.min_tail,
+            date0_ext, why = refine_date0(s, date0) if a.refine else (date0, "")
+            exts = estimate_extensions(daily, date0_ext, kwp0, min_tail_days=a.min_tail,
                                        threshold=a.threshold, diag=diag)
         except Exception as e:  # diagnosi: solo il tipo, senza valori
             diags.append({"customer_id": cid, "reason": f"eccezione_{type(e).__name__}", "best_gain": np.nan})
@@ -154,11 +160,12 @@ def main() -> int:
         diags.append({"customer_id": cid, **diag})
         ts = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
         base = {"customer_id": cid, "win_start": ts.min().strftime("%Y-%m-%d"),
-                "win_end": ts.max().strftime("%Y-%m-%d"), "date0": date0, "kwp0": round(kwp0, 2),
-                "n_days": len(daily)}
+                "win_end": ts.max().strftime("%Y-%m-%d"), "date0": date0, "date0_ext": date0_ext,
+                "refine_reason": why, "kwp0": round(kwp0, 2), "n_days": len(daily)}
         rows += [{**base, **e} for e in exts] or [{**base, "date": "", "kwp_after": np.nan, "strength": np.nan}]
 
-    res = pd.DataFrame(rows, columns=["customer_id", "win_start", "win_end", "date0", "kwp0", "n_days",
+    res = pd.DataFrame(rows, columns=["customer_id", "win_start", "win_end", "date0", "date0_ext", "refine_reason",
+                                      "kwp0", "n_days",
                                       "date", "kwp_after", "strength"])
     dg = pd.DataFrame(diags, columns=["customer_id", "reason", "best_gain", "best_coef"])
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
@@ -168,8 +175,12 @@ def main() -> int:
     pred = res[res["date"] != ""]
     with_ext = set(ext_lab["customer_id"])
     win = res.groupby("customer_id")[["win_start", "win_end"]].first()
-    print(f"Finestra: {a.window}, min_tail: {a.min_tail}, soglia: {a.threshold}")
-    print(f"Clienti analizzati:      {res['customer_id'].nunique()}")
+    print(f"Finestra: {a.window}, min_tail: {a.min_tail}, soglia: {a.threshold}, refine: {a.refine}")
+    motivi = ""
+    if a.refine:
+        cnt = res.drop_duplicates("customer_id")["refine_reason"].value_counts()
+        motivi = " (motivi refine: " + ", ".join(f"{k} {v}" for k, v in cnt.items()) + ")"
+    print(f"Clienti analizzati:      {res['customer_id'].nunique()}{motivi}")
     print(f"Estensioni previste:     {len(pred)}")
     print(f"Falsi allarmi (clienti): {pred.loc[~pred['customer_id'].isin(with_ext), 'customer_id'].nunique()}")
     print("Esiti (clienti): " + ", ".join(f"{k} {v}" for k, v in dg["reason"].value_counts().items()))

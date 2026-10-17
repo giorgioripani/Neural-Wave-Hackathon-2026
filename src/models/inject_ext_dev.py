@@ -20,13 +20,17 @@ serie iniettata, come farebbe inference.py (date.estimate puo` allora scegliere 
 gradino dell'estensione: date0 ristimato e` sempre salvato in date0_reest). Con
 --date-method v4 la ristima sulle serie iniettate usa date.estimate_v4 (default
 v2); date0 della finestra originale, usato per scegliere le date e per i falsi
-allarmi, resta quello di date.estimate (v2), cosi` le iniezioni sono le stesse. Le
+allarmi, resta quello di date.estimate (v2), cosi` le iniezioni sono le stesse.
+--refine (solo con --reestimate-date0): sulle serie iniettate E sulle originali
+(falsi allarmi) le estensioni si cercano da date0_ext = refine_date0(serie, date0),
+come extensions.predict_extensions_refined; date0 e kwp0 non cambiano. Le date
+iniettate si scelgono sempre dal date0 senza refine. Le
 serie originali (stesse finestre) danno i falsi allarmi.
 
 Uso (dalla radice del repo):
     python src/models/inject_ext_dev.py [--series data/clean/dev.parquet]
         [--labels data/pv_labels_dev.csv] [--ext-labels data/pv_extensions_labels_dev.csv]
-        [--out-dir outputs/inject_ext] [--reestimate-date0] [--date-method v2|v4]
+        [--out-dir outputs/inject_ext] [--reestimate-date0] [--date-method v2|v4] [--refine]
 
 Stampa solo: clienti usati e saltati, poi una riga per soglia: recall entro 30
 giorni (totale e per r), quante date ristimate cadono entro 30 giorni dalla data
@@ -47,7 +51,7 @@ from src.eval.score import load_labels  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models import capacity  # noqa: E402
 from src.models.date import MIDDAY_UTC_HOURS, estimate, estimate_v2, estimate_v4  # noqa: E402
-from src.models.extensions import daily_ext_features, estimate_extensions  # noqa: E402
+from src.models.extensions import daily_ext_features, estimate_extensions, refine_date0  # noqa: E402
 from src.models.run_ext_dev import MATCH_DAYS, cut_window, load_ext_labels  # noqa: E402
 
 SEED = 42
@@ -105,41 +109,50 @@ def pick_dates(rng: np.random.Generator, date0, first, last, n: int = N_DATES) -
     return sorted(days[rng.choice(len(days), size=n, replace=False)])
 
 
-def run_pipeline(s: pd.DataFrame, thresholds=THRESHOLDS, date0=None, kwp0=None, date_fn=estimate) -> tuple:
+def run_pipeline(s: pd.DataFrame, thresholds=THRESHOLDS, date0=None, kwp0=None, date_fn=estimate,
+                 refine: bool = False) -> tuple:
     """Come inference.py: date0 (date_fn, default date.estimate), kwp0
-    (capacity.estimate), poi estensioni per ogni soglia. date0/kwp0 dati: si usano
-    quelli. -> (date0 usato, kwp0 usato, date0 ristimato su s, {soglia: estensioni})."""
+    (capacity.estimate), poi estensioni per ogni soglia, cercate da date0 o, con
+    refine, da refine_date0(s, date0) (come predict_extensions_refined).
+    date0/kwp0 dati: si usano quelli. -> (date0 usato, kwp0 usato, date0 ristimato
+    su s, {soglia: estensioni}, motivo di refine o "", inizio della ricerca)."""
     daily = daily_ext_features(s)
     reest = date_fn(daily)
     if date0 is None:
         date0, kwp0 = reest, capacity.estimate(s, reest)
-    return date0, kwp0, reest, {t: estimate_extensions(daily, date0, kwp0, threshold=t) for t in thresholds}
+    start, reason = refine_date0(s, date0) if refine else (date0, "")
+    exts = {t: estimate_extensions(daily, start, kwp0, threshold=t) for t in thresholds}
+    return date0, kwp0, reest, exts, reason, start
 
 
 def evaluate_customer(cid, full: pd.DataFrame, true_date, kwp_label, rng, thresholds=THRESHOLDS,
-                      reestimate_date0: bool = False, date_fn=estimate):
-    """date_fn: metodo della data per la ristima sulle serie iniettate."""
-    """-> (motivo di salto o None, righe iniettate, righe originali)."""
+                      reestimate_date0: bool = False, date_fn=estimate, refine: bool = False):
+    """-> (motivo di salto o None, righe iniettate, righe originali).
+    date_fn: metodo della data per la ristima sulle serie iniettate; refine:
+    estensioni cercate da refine_date0, sulle serie iniettate e sulle originali."""
     drop = monthly_drop(daily_ext_features(full), true_date)
     if drop is None:
         return "pochi_mesi", [], []
     s = cut_window(full, "last730")[["ts_epoch", "kwh"]].reset_index(drop=True)
     ts = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
     first, last = ts.min().tz_localize(None), ts.max().tz_localize(None)
-    date0, kwp0, _, orig = run_pipeline(s, thresholds)
-    dates = pick_dates(rng, date0, first, last)
+    date0, kwp0, _, orig, o_reason, o_start = run_pipeline(s, thresholds, refine=refine)
+    dates = pick_dates(rng, date0, first, last)  # date0 senza refine: stesse iniezioni con e senza
     if not dates:
         return "finestra_corta", [], []
-    orig_rows = [{"customer_id": cid, "threshold": t, "n_pred": len(e)} for t, e in orig.items()]
+    orig_rows = [{"customer_id": cid, "threshold": t, "n_pred": len(e), "date0": date0, "date0_ext": o_start,
+                  "refine_reason": o_reason} for t, e in orig.items()]
     inj_rows = []
     for d in dates:
         for r in R_VALUES:
             true_kwp = kwp_label * (1 + r)
             fixed = (None, None) if reestimate_date0 else (date0, kwp0)
-            d0, _, reest, res = run_pipeline(inject(s, d, r, drop), thresholds, *fixed, date_fn=date_fn)
+            d0, _, reest, res, reason, start = run_pipeline(inject(s, d, r, drop), thresholds, *fixed,
+                                                            date_fn=date_fn, refine=refine)
             for t, exts in res.items():
                 row = {"customer_id": cid, "inj_date": d.date(), "r": r, "threshold": t,
-                       "date0_orig": date0, "date0": d0, "date0_reest": reest,
+                       "date0_orig": date0, "date0": d0, "date0_reest": reest, "date0_ext": start,
+                       "refine_reason": reason,
                        "true_date": pd.Timestamp(true_date).date(), "win_start": first.date(),
                        "true_kwp_after": true_kwp, "n_pred": len(exts), "found": False,
                        "err_days": np.nan, "kwp_err_pct": np.nan}
@@ -201,7 +214,10 @@ def main() -> int:
                     help="ristima date0 e kwp0 sulla serie iniettata (default: quelli della finestra originale)")
     ap.add_argument("--date-method", choices=sorted(DATE_METHODS), default="v2",
                     help="metodo della data per la ristima (vale con --reestimate-date0)")
+    ap.add_argument("--refine", action="store_true", help="refine_date0 dopo la ristima (con --reestimate-date0)")
     a = ap.parse_args()
+    if a.refine and not a.reestimate_date0:
+        ap.error("--refine si usa insieme a --reestimate-date0")
     np.random.seed(SEED)
     rng = np.random.default_rng(SEED)
 
@@ -219,7 +235,8 @@ def main() -> int:
         try:
             why, i_rows, o_rows = evaluate_customer(cid, groups[cid], true_date, float(kwp), rng,
                                                      reestimate_date0=a.reestimate_date0,
-                                                     date_fn=DATE_METHODS[a.date_method if a.reestimate_date0 else "v2"])
+                                                     date_fn=DATE_METHODS[a.date_method if a.reestimate_date0 else "v2"],
+                                                     refine=a.refine)
         except Exception as e:  # solo il tipo, senza valori
             why, i_rows, o_rows = f"eccezione_{type(e).__name__}", [], []
         if why:
@@ -243,6 +260,11 @@ def main() -> int:
     method = a.date_method if a.reestimate_date0 else "v2"
     print(f"date0 ristimato ({method}) entro {MATCH_DAYS} gg dalla data iniettata: "
           f"{near['tot'][0]}/{near['tot'][1]} ({per_r})")
+    if a.refine:
+        one = inj_df.drop_duplicates(["customer_id", "inj_date", "r"])
+        o_one = orig_df.drop_duplicates("customer_id")
+        print("Motivi refine: iniezioni " + ", ".join(f"{k} {v}" for k, v in one["refine_reason"].value_counts().items())
+              + "; originali " + ", ".join(f"{k} {v}" for k, v in o_one["refine_reason"].value_counts().items()))
     early, later = true_date_split(inj_df)
     print(f"  di cui data vera prima della finestra o nei primi {EARLY_DAYS} gg: {early}, dopo: {later}")
     summ = summarize(inj_df, orig_df, n_used)

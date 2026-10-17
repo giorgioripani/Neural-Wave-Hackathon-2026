@@ -93,3 +93,5 @@ FEATURES PER CAPIRE LA PRESENZA DI UN PV - FLAVIO
 
 Data v4 (due gradini, il primo come installazione): sui 22 clienti D 0,628 contro 0,597 della v2 (1 cliente migliorato, 0 peggiorati); nell’iniezione realistica la data rubata dall’estensione resta 27/114 come con la v2, la recall delle estensioni passa da 0,17 a 0,19 e l’errore kWp da 42% a 66%. Non adottata: il secondo criterio di accettazione, fissato prima, non è soddisfatto e il guadagno di D si basa su un solo cliente.
 Diagnosi della data rubata dall’estensione: 26 casi su 27 hanno l’installazione vera prima della finestra (o nei primi 60 giorni). Nella finestra si vede un solo gradino e il metodo lo prende per l’installazione. Soluzione individuata: decidere con il rilevatore del Task 1 se prima del gradino c’è già fotovoltaico.
+
+refine_date0 (detect sul tratto prima del gradino) per la data principale: D 0,556 contro 0,597 della v2 (3 clienti peggiorati) → respinto. Per le estensioni: data rubata 27→6 su 114, recall 0,17→0,33, F1_ext atteso 0,29→0,50 → da usare solo nella ricerca delle estensioni, se i falsi allarmi sui clienti reali restano bassi.
