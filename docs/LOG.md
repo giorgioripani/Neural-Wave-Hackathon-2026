@@ -6,3 +6,5 @@ v2 (stagionalità + gradino costante, regola “nessun gradino”): D 0,582; med
 v3 (gradino stagionale con termini post·sin e post·cos): D 0,568; mediana 4,5 gg; 6 clienti oltre 30 gg. Scartata: sistema POD22 e POD23 ma crea gradini falsi quando ci sono meno di circa sei mesi di dati prima dell’installazione (POD34, POD35).
 
 La scelta della v2 tra v1, v2 e v3 è stata fatta sugli stessi 22 clienti: possibile leggero ottimismo. La soglia del 5% è stata fissata prima dei risultati.
+
+Tolto fillna(0.0): NaN lasciati, media sugli intervalli presenti, EPS diviso per il numero di intervalli (senza buchi il gradino resta identico), giorno scartato se in una finestra manca più del 25% degli intervalli (soglia fissata a priori). D sui 22 clienti: 0,581 (prima 0,582); mediana 4,0 gg; 7 clienti oltre 30 gg. La piccola differenza viene dai giorni scartati per timestamp mancanti.
