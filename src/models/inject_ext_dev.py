@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Estensioni (bonus) su estensioni INIETTATE nei clienti di sviluppo con fotovoltaico.
+
+Clienti: pv_installed=TRUE, esclusi quelli con un'estensione nelle etichette.
+Forma dell'effetto (serie intera, data VERA di installazione): calo di mezzogiorno
+per mese dell'anno = media di midday_kwh (kWh medi per quarto d'ora, 10-13 UTC)
+prima della data meno media dopo, sui mesi presenti in entrambi i periodi; i mesi
+mancanti si interpolano dai mesi vicini (in modo circolare), i cali negativi
+diventano 0. Cliente saltato se ha meno di MIN_MONTHS mesi (anno-mese distinti)
+prima o dopo l'installazione.
+
+Iniezione, nella finestra last730 di run_ext_dev: N_DATES date per cliente (seed
+42), almeno MIN_AFTER_DATE0 giorni dopo date0 (date.estimate sulla finestra
+originale) e almeno MIN_BEFORE_END giorni prima della fine. Dal giorno UTC della
+data in poi, agli intervalli 10-13 UTC si toglie r x calo del mese (r in R_VALUES),
+poi si taglia a 0 (NaN restano NaN). Capacita` vera dopo l'estensione: kWp
+etichetta x (1 + r). Poi estimate_extensions per ogni soglia di THRESHOLDS con
+date0 e kwp0 della finestra originale; con --reestimate-date0 si ristimano sulla
+serie iniettata, come farebbe inference.py (date.estimate puo` allora scegliere il
+gradino dell'estensione: date0 ristimato e` sempre salvato in date0_reest). Le
+serie originali (stesse finestre) danno i falsi allarmi.
+
+Uso (dalla radice del repo):
+    python src/models/inject_ext_dev.py [--series data/clean/dev.parquet]
+        [--labels data/pv_labels_dev.csv] [--ext-labels data/pv_extensions_labels_dev.csv]
+        [--out-dir outputs/inject_ext] [--reestimate-date0]
+
+Stampa solo: clienti usati e saltati, poi una riga per soglia: recall entro 30
+giorni (totale e per r), mediana dell'errore in giorni sulle trovate, mediana
+dell'errore % sui kWp, falsi allarmi per cliente sulle serie originali, F1_ext
+atteso per un test con 3 estensioni e 10 clienti con fotovoltaico.
+"""
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.eval.score import load_labels  # noqa: E402
+from src.loading.load import load_series  # noqa: E402
+from src.models import capacity  # noqa: E402
+from src.models.date import MIDDAY_UTC_HOURS, estimate  # noqa: E402
+from src.models.extensions import daily_ext_features, estimate_extensions  # noqa: E402
+from src.models.run_ext_dev import MATCH_DAYS, cut_window, load_ext_labels  # noqa: E402
+
+SEED = 42
+MIN_MONTHS = 6
+N_DATES = 2
+MIN_AFTER_DATE0, MIN_BEFORE_END = 120, 90
+R_VALUES = (0.3, 0.6, 1.0)
+THRESHOLDS = (0.05, 0.075, 0.10, 0.15)
+TEST_EXT, TEST_PV = 3, 10  # test immaginato: 3 estensioni, 10 clienti con fotovoltaico
+
+
+def monthly_drop(daily: pd.DataFrame, true_date) -> np.ndarray | None:
+    """daily: colonne date, midday_kwh (daily_ext_features della serie intera).
+    -> 12 cali (kWh per quarto d'ora, >= 0), indice 0 = gennaio; None se meno di
+    MIN_MONTHS mesi prima o dopo true_date o nessun mese in comune."""
+    d = daily[["date", "midday_kwh"]].dropna().copy()
+    d["date"] = pd.to_datetime(d["date"])
+    after = d["date"] >= pd.Timestamp(true_date)
+    ym = d["date"].dt.to_period("M")
+    if ym[~after].nunique() < MIN_MONTHS or ym[after].nunique() < MIN_MONTHS:
+        return None
+    m = d["date"].dt.month
+    pre = d[~after].groupby(m[~after])["midday_kwh"].mean()
+    post = d[after].groupby(m[after])["midday_kwh"].mean()
+    common = pre.index.intersection(post.index)
+    if common.empty:
+        return None
+    drop = (pre[common] - post[common]).reindex(range(1, 13))
+    # interpolazione circolare: si ripete l'anno prima e dopo
+    ext = pd.concat([drop, drop, drop], ignore_index=True).interpolate(limit_direction="both")
+    return np.clip(ext.iloc[12:24].to_numpy(), 0, None)
+
+
+def inject(series: pd.DataFrame, date, r: float, drop: np.ndarray) -> pd.DataFrame:
+    """Copia di series (kwh, ts_epoch) con r x drop[mese] tolto agli intervalli
+    10-13 UTC dal giorno UTC di date in poi, tagliato a 0."""
+    ts = pd.to_datetime(series["ts_epoch"].astype("int64"), unit="s", utc=True)
+    hour = ts.dt.hour
+    mask = ((hour >= MIDDAY_UTC_HOURS[0]) & (hour < MIDDAY_UTC_HOURS[1])
+            & (ts >= pd.Timestamp(date, tz="UTC"))).to_numpy()
+    kwh = series["kwh"].astype(float).to_numpy().copy()
+    kwh[mask] = np.clip(kwh[mask] - r * drop[ts.dt.month.to_numpy()[mask] - 1], 0, None)
+    return series.assign(kwh=kwh)
+
+
+def pick_dates(rng: np.random.Generator, date0, first, last, n: int = N_DATES) -> list:
+    """n giorni distinti in [date0 + MIN_AFTER_DATE0, last - MIN_BEFORE_END] (e >= first)."""
+    lo = max(pd.Timestamp(date0) + pd.Timedelta(days=MIN_AFTER_DATE0), pd.Timestamp(first))
+    hi = pd.Timestamp(last) - pd.Timedelta(days=MIN_BEFORE_END)
+    days = pd.date_range(lo.normalize(), hi.normalize(), freq="D")
+    if len(days) < n:
+        return []
+    return sorted(days[rng.choice(len(days), size=n, replace=False)])
+
+
+def run_pipeline(s: pd.DataFrame, thresholds=THRESHOLDS, date0=None, kwp0=None) -> tuple:
+    """Come inference.py: date0 (date.estimate), kwp0 (capacity.estimate), poi
+    estensioni per ogni soglia. date0/kwp0 dati: si usano quelli. -> (date0 usato,
+    kwp0 usato, date0 ristimato su s, {soglia: estensioni})."""
+    daily = daily_ext_features(s)
+    reest = estimate(daily)
+    if date0 is None:
+        date0, kwp0 = reest, capacity.estimate(s, reest)
+    return date0, kwp0, reest, {t: estimate_extensions(daily, date0, kwp0, threshold=t) for t in thresholds}
+
+
+def evaluate_customer(cid, full: pd.DataFrame, true_date, kwp_label, rng, thresholds=THRESHOLDS,
+                      reestimate_date0: bool = False):
+    """-> (motivo di salto o None, righe iniettate, righe originali)."""
+    drop = monthly_drop(daily_ext_features(full), true_date)
+    if drop is None:
+        return "pochi_mesi", [], []
+    s = cut_window(full, "last730")[["ts_epoch", "kwh"]].reset_index(drop=True)
+    ts = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
+    first, last = ts.min().tz_localize(None), ts.max().tz_localize(None)
+    date0, kwp0, _, orig = run_pipeline(s, thresholds)
+    dates = pick_dates(rng, date0, first, last)
+    if not dates:
+        return "finestra_corta", [], []
+    orig_rows = [{"customer_id": cid, "threshold": t, "n_pred": len(e)} for t, e in orig.items()]
+    inj_rows = []
+    for d in dates:
+        for r in R_VALUES:
+            true_kwp = kwp_label * (1 + r)
+            fixed = (None, None) if reestimate_date0 else (date0, kwp0)
+            d0, _, reest, res = run_pipeline(inject(s, d, r, drop), thresholds, *fixed)
+            for t, exts in res.items():
+                row = {"customer_id": cid, "inj_date": d.date(), "r": r, "threshold": t,
+                       "date0_orig": date0, "date0": d0, "date0_reest": reest,
+                       "true_kwp_after": true_kwp, "n_pred": len(exts), "found": False,
+                       "err_days": np.nan, "kwp_err_pct": np.nan}
+                if exts:
+                    err = np.array([(pd.Timestamp(e["date"]) - d).days for e in exts])
+                    j = int(np.abs(err).argmin())
+                    row.update(err_days=int(err[j]), found=bool(abs(err[j]) <= MATCH_DAYS),
+                               kwp_err_pct=abs(exts[j]["kwp_after"] - true_kwp) / true_kwp * 100)
+                inj_rows.append(row)
+    return None, inj_rows, orig_rows
+
+
+def summarize(inj: pd.DataFrame, orig: pd.DataFrame, n_customers: int) -> pd.DataFrame:
+    """Una riga per soglia: recall (totale e per r), mediane degli errori sulle trovate,
+    falsi allarmi per cliente sugli originali e F1_ext atteso sul test immaginato."""
+    rows = []
+    for t, g in inj.groupby("threshold"):
+        hit = g[g["found"]]
+        recall = g["found"].mean()
+        fa = orig.loc[orig["threshold"] == t, "n_pred"].sum() / max(n_customers, 1)
+        tp, fp = TEST_EXT * recall, TEST_PV * fa
+        f1 = 2 * tp / (2 * tp + fp + (TEST_EXT - tp)) if (2 * tp + fp + TEST_EXT - tp) > 0 else 0.0
+        row = {"threshold": t, "recall": recall}
+        row.update({f"recall_r{r}": g.loc[g["r"] == r, "found"].mean() for r in R_VALUES})
+        row.update(med_err_days=hit["err_days"].abs().median(), med_kwp_err_pct=hit["kwp_err_pct"].median(),
+                   fa_per_customer=fa, f1_ext=f1)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--series", default="data/clean/dev.parquet")
+    ap.add_argument("--labels", default="data/pv_labels_dev.csv")
+    ap.add_argument("--ext-labels", default="data/pv_extensions_labels_dev.csv")
+    ap.add_argument("--out-dir", default="outputs/inject_ext")
+    ap.add_argument("--reestimate-date0", action="store_true",
+                    help="ristima date0 e kwp0 sulla serie iniettata (default: quelli della finestra originale)")
+    a = ap.parse_args()
+    np.random.seed(SEED)
+    rng = np.random.default_rng(SEED)
+
+    lab = load_labels(a.labels)
+    with_ext = set(load_ext_labels(a.ext_labels)["customer_id"])
+    pos = lab[lab["pv_installed"] & lab["pv_installation_date"].notna() & ~lab["customer_id"].isin(with_ext)]
+    series = load_series(a.series, customers=pos["customer_id"].tolist())
+    groups = dict(tuple(series.groupby("customer_id", sort=False)))
+
+    inj, orig, skipped = [], [], []
+    for cid, true_date, kwp in sorted(zip(pos["customer_id"], pos["pv_installation_date"], pos["pv_capacity_kwp"])):
+        if cid not in groups:
+            skipped.append({"customer_id": cid, "reason": "assente_dalla_serie"})
+            continue
+        try:
+            why, i_rows, o_rows = evaluate_customer(cid, groups[cid], true_date, float(kwp), rng,
+                                                     reestimate_date0=a.reestimate_date0)
+        except Exception as e:  # solo il tipo, senza valori
+            why, i_rows, o_rows = f"eccezione_{type(e).__name__}", [], []
+        if why:
+            skipped.append({"customer_id": cid, "reason": why})
+        inj += i_rows
+        orig += o_rows
+
+    out = Path(a.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    inj_df, orig_df, skip_df = pd.DataFrame(inj), pd.DataFrame(orig), pd.DataFrame(skipped, columns=["customer_id", "reason"])
+    inj_df.to_csv(out / "injections.csv", index=False)
+    orig_df.to_csv(out / "originals.csv", index=False)
+    skip_df.to_csv(out / "skipped.csv", index=False)
+    n_used = orig_df["customer_id"].nunique() if len(orig_df) else 0
+    reasons = ", ".join(f"{k} {v}" for k, v in skip_df["reason"].value_counts().items())
+    print(f"Clienti usati: {n_used}, saltati: {len(skip_df)}" + (f" ({reasons})" if reasons else ""))
+    if not n_used:
+        return 0
+    summ = summarize(inj_df, orig_df, n_used)
+    summ.to_csv(out / "summary.csv", index=False)
+    for _, r in summ.iterrows():
+        per_r = " ".join(f"r{x}={r[f'recall_r{x}']:.2f}" for x in R_VALUES)
+        print(f"soglia {r['threshold']:.3f}: recall {r['recall']:.2f} ({per_r}), err gg {r['med_err_days']:.0f}, "
+              f"err kWp {r['med_kwp_err_pct']:.0f}%, FA/cliente {r['fa_per_customer']:.2f}, F1_ext {r['f1_ext']:.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

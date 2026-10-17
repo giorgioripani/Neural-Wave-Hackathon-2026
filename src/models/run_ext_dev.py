@@ -12,7 +12,7 @@ Uso (dalla radice del repo):
         [--out outputs/ext_dev.csv] [--window full|last730] [--min-tail GIORNI]
 
 --min-tail: passato a estimate_extensions come min_tail_days (default 0).
---threshold: miglioramento minimo dell'errore (default 0.10, quello del metodo).
+--threshold: miglioramento minimo dell'errore (default EXT_THRESHOLD = 0.05, quello del metodo).
 
 Diagnosi (solo conteggi): clienti per esito della prima ricerca (eccezione con il
 solo tipo, coda corta, gradino verso l'alto, sotto soglia, vicino alla fine,
@@ -40,7 +40,7 @@ from src.eval.score import load_labels  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models import capacity  # noqa: E402
 from src.models.date import estimate  # noqa: E402
-from src.models.extensions import MIN_SSE_GAIN_EXT, daily_ext_features, estimate_extensions  # noqa: E402
+from src.models.extensions import EXT_THRESHOLD, daily_ext_features, estimate_extensions  # noqa: E402
 
 SEED = 42
 MATCH_DAYS = 30
@@ -126,7 +126,7 @@ def main() -> int:
     ap.add_argument("--out", default="outputs/ext_dev.csv")
     ap.add_argument("--window", choices=["full", "last730"], default="last730")
     ap.add_argument("--min-tail", type=int, default=0, help="min_tail_days di estimate_extensions")
-    ap.add_argument("--threshold", type=float, default=MIN_SSE_GAIN_EXT, help="soglia (b) di estimate_extensions")
+    ap.add_argument("--threshold", type=float, default=EXT_THRESHOLD, help="soglia (b) di estimate_extensions")
     a = ap.parse_args()
     np.random.seed(SEED)
 
