@@ -8,8 +8,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.eval.score import capacity_score, official_score, read_predictions  # noqa: E402
-from src.eval.score_date import load_labels  # noqa: E402
+from src.eval.score import capacity_score, date_score, load_labels, official_score, read_predictions  # noqa: E402
+
 
 
 def labels(tmp_path):
@@ -101,3 +101,15 @@ def test_prepare_comma_decimal(tmp_path):
     r, dst = run_prepare(tmp_path, text, "--decimal", ",")
     assert r.returncode == 0, r.stderr
     assert pd.read_parquet(dst)["energy_consumption_kwh"].tolist() == [0.25]
+
+
+def test_edge_cases(tmp_path):
+    lab = labels(tmp_path)
+    as_text = pd.DataFrame({"customer_id": ["POD001"], "pv_installed": ["TRUE"],
+                            "pv_installation_date": ["2024-05-01"], "pv_capacity_kwp": [10.0]})
+    assert official_score(as_text, lab)["tp"] == 1
+    with pytest.raises(ValueError):
+        official_score(pd.concat([as_text, as_text]), lab)
+    assert date_score("2024-13-01", "2024-05-01") == 0.0
+    assert date_score("2024-05-01", pd.NaT) == 0.0
+    assert capacity_score("abc", 10) == 0.0
