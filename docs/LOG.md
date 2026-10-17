@@ -122,3 +122,7 @@ Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova m
 Agente usato per scrivere src/eval/loo_pipeline.py: pipeline di inference.py dentro validate.py (2 anni, 5 giri, seed 42).
 Artefatti attuali 79,19 ± 2,92; soglie detect ricalcolate senza il cliente 78,10 ± 2,42; detect e capacity ricalcolati 77,93 ± 2,42 (F1 0,909, D 0,608, P 0,439). La perdita per l'in-sample è piccola (circa 1,3 punti).
 Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo (dip_spread + rec_drop, geo_b), fatta guardando tutti i 40 clienti. Neanche date.py v2 è stato scelto in LOO.
+24	Decision tree on all 11 features (depth 1-3, min leaf 5/10, balanced or not), LOO on 2-year windows	0.927-0.952	20	0	2	Rejected: best ties the cascade; root split is clamp_summer > 0.002 (one zero-midday day), fragile; it rediscovers the second pass rec_drop > 0.135
+25	Same trees without clamp_summer / random forest (200 trees, depth 3)	0.927 (d2), 0.884 (d3) / 0.857	-	0-2	3-4	Rejected: no gain, deeper models overfit 40 customers
+26	Agent (Claude Code, 2026-10-17): wrote src/models/tree_detect.py (experiment, not in inference) and ran the tree comparison
+27	Agent (Claude Code, 2026-10-17): detect.py safety: invalid epoch rows dropped, per-customer try (failure -> no PV for that customer only), rec_drop missing keeps main proba. LOO unchanged 0.952; 19/19 synthetic edge cases OK
