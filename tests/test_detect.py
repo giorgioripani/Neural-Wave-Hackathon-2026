@@ -115,6 +115,21 @@ def test_not_computable_features_stay_0499():
     assert out["POD0000"] == 0.499
 
 
+def test_only_last_two_years_are_used():
+    d = _daily(days=1460, dip_sd=1.0)            # 4 years
+    old = d["date"] <= d["date"].max() - pd.Timedelta(days=detect.LAST_DAYS)
+    d2 = d.copy()
+    d2.loc[old, "midday"] = 0.01                 # change only the first 2 years
+    f4, f2 = detect.features_from_daily(d), detect.features_from_daily(d2)
+    assert f4["dip_spread"] == f2["dip_spread"] and f4["rec_drop"] == f2["rec_drop"]
+
+
+def test_predict_same_on_4_years_and_last_2_years():
+    series, _ = make_synthetic(n_customers=2, days=1460)
+    cut = series["timestamp_epoch"].max() - detect.LAST_DAYS * 86400
+    assert detect.predict(series) == detect.predict(series[series["timestamp_epoch"] >= cut])
+
+
 def test_features_have_all_keys():
     f = detect.features_from_daily(_daily())
     assert list(f) == detect.FEATURES

@@ -31,7 +31,7 @@ from src.models import detect  # noqa: E402
 SERIES = ROOT / "data" / "clean" / "dev.parquet"
 OUT_WINDOWS = ROOT / "outputs" / "detect_window_features.csv"
 OUT_SCORES = ROOT / "outputs" / "detect_feature_scores.csv"
-WINDOW_DAYS = 730
+WINDOW_DAYS = detect.LAST_DAYS  # training windows = what predict() sees
 STEP_DAYS = 182
 
 
