@@ -169,3 +169,20 @@ Pseudo-etichette annidate nel LOO (python -m src.eval.loo_pseudo, serie intera, 
 | studente 0,95/0,05 | 78,70 | 0,900 | 0,702 | 0,461 | 18/0/4 | 109-119 / 8-23 | idem | [-3,95; +4,56] |
 
 Scartato: lo studente prende sui 40 clienti del dev le stesse decisioni della LR senza pseudo-etichette; +0,21 contro la regola, dentro il rumore (un cliente in piu o in meno sposta 2-4 punti). inference.py e artifacts/ invariati.
+
+### Pseudo-etichette, seconda prova: soglie piu` basse e pseudo-etichette bilanciate (Giorgio, con agente Claude Code)
+`python -m src.eval.loo_pseudo --modes ... --out loo_pseudo_soglie.csv`, stesso protocollo annidato (serie intera, 39 per ogni giro). Bilanciate = stesso numero di TRUE e FALSE per giro, i piu` sicuri secondo la LR.
+
+| modo | punteggio | F1 | D | P | TP/FP/FN | pseudo TRUE / FALSE per giro | vs regola | bootstrap diff. 5-95% |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| regola (main) | 78,49 | 0,905 | 0,665 | 0,452 | 19/1/3 | - | - | - |
+| LR senza pseudo | 78,70 | 0,900 | 0,702 | 0,461 | 18/0/4 | - | 1 FP corretto, 1 nuovo FN | [-3,95; +4,56] |
+| 0,9/0,1 peso 0,3 | 78,70 | idem | idem | idem | 18/0/4 | 126-144 / 40-102 | idem | idem |
+| 0,9/0,1 bilanciate, peso 0,3 e 1 | 78,70 | idem | idem | idem | 18/0/4 | 40-102 / 40-102 | idem | idem |
+| 0,8/0,2 peso 0,3 e 1 | 78,70 | idem | idem | idem | 18/0/4 | 149-155 / 462-590 | idem | idem |
+| 0,8/0,2 bilanciate, peso 0,3 e 1 | 78,70 | idem | idem | idem | 18/0/4 | 149-155 / 149-155 | idem | idem |
+| 0,7/0,3 peso 0,3 e 1 | 78,70 | idem | idem | idem | 18/0/4 | 161-172 / 641-699 | idem | idem |
+| 0,7/0,3 bilanciate, peso 0,3 e 1 | 78,70 | idem | idem | idem | 18/0/4 | 161-172 / 161-172 | idem | idem |
+
+Controllo: gli studenti cambiano davvero le probabilita` sui 40 clienti lasciati fuori (|p - p_LR| mediana 0,03-0,10, massimo 0,05-0,23; clienti con p tra 0,2 e 0,8: 10 con la LR, 2-6 con gli studenti) ma le spingono lontano da 0,5 dalla parte in cui erano gia`: nessuna decisione cambia. Le pseudo-etichette rinforzano il confine dei maestri invece di spostarlo.
+Scartato: tutti gli studenti uguali alla LR senza pseudo-etichette (78,70 vs 78,49, nel rumore).

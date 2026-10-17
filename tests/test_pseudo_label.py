@@ -38,6 +38,15 @@ def test_select_pseudo_needs_agreement_and_confidence():
     assert pl.select_pseudo(v, 0.96, 0.04).empty
 
 
+def test_select_pseudo_balanced_keeps_most_confident():
+    v = pd.DataFrame({"rule": [True, True, True, False, False],
+                      "tree": [True, True, True, False, False],
+                      "lr_p": [0.91, 0.99, 0.95, 0.05, 0.2]}, index=list("abcde"))
+    s = pl.select_pseudo(v, 0.9, 0.1, balanced=True)
+    assert s.to_dict() == {"b": True, "d": False}
+    assert len(pl.select_pseudo(v, 0.9, 0.3, balanced=True)) == 4
+
+
 def test_student_learns_and_weights_pseudo():
     win, U = _feat_table(60, 0), _feat_table(80, 1).drop(columns=["y", "customer_id"])
     U.index = [f"U{i}" for i in range(len(U))]
@@ -79,7 +88,7 @@ def test_loo_pseudo_modes_run_and_leave_customer_out():
     U = win.drop(columns=["customer_id", "y", "k", "end"]).reset_index(drop=True)
     U.index = [f"U{i}" for i in range(len(U))]
     preds = {}
-    for mode in lps.MODES:
+    for mode in [*lps.DEFAULT_MODES, "s70_bal_w1"]:
         log: dict = {}
         summary, p = validate(series, lab, lp.make_featurize(), lps.make_fit_predict(mode, win, cap, U, log),
                               **lp.PROTOCOLS["serie_intera"])

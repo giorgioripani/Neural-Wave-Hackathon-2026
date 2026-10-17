@@ -68,10 +68,16 @@ def fit_teachers(win: pd.DataFrame) -> Teachers:
     return Teachers(run_detect.fit_recent(win), fit_lr(win, y), tree)
 
 
-def select_pseudo(v: pd.DataFrame, hi: float = 0.9, lo: float = 0.1) -> pd.Series:
-    """Agreement of the three teachers -> pseudo-label (bool) for the selected customers only."""
+def select_pseudo(v: pd.DataFrame, hi: float = 0.9, lo: float = 0.1, balanced: bool = False) -> pd.Series:
+    """Agreement of the three teachers -> pseudo-label (bool) for the selected customers only.
+    balanced: as many TRUE as FALSE, keeping the most confident of each class (LR probability)."""
     pos = v["rule"] & v["tree"] & (v["lr_p"] >= hi)
     neg = ~v["rule"] & ~v["tree"] & (v["lr_p"] <= lo)
+    if balanced:
+        k = int(min(pos.sum(), neg.sum()))
+        top = v.loc[pos, "lr_p"].sort_values(ascending=False, kind="stable").index[:k]
+        bottom = v.loc[neg, "lr_p"].sort_values(kind="stable").index[:k]
+        pos, neg = pd.Series(v.index.isin(top), index=v.index), pd.Series(v.index.isin(bottom), index=v.index)
     return pos[pos | neg].astype(bool)
 
 
@@ -81,9 +87,9 @@ def usable(U: pd.DataFrame) -> pd.DataFrame:
 
 
 def fit_student(win: pd.DataFrame, U: pd.DataFrame, hi: float = 0.9, lo: float = 0.1,
-                weight: float = PSEUDO_WEIGHT) -> tuple[LR, pd.Series]:
+                weight: float = PSEUDO_WEIGHT, balanced: bool = False) -> tuple[LR, pd.Series]:
     """Teachers on win -> pseudo-labels on U -> LR on win (weight 1) + pseudo (weight `weight`)."""
-    pseudo = select_pseudo(fit_teachers(win).votes(U), hi, lo)
+    pseudo = select_pseudo(fit_teachers(win).votes(U), hi, lo, balanced)
     X = pd.concat([win[LR_FEATURES], U.loc[pseudo.index, LR_FEATURES]])
     y = np.concatenate([win["y"].astype(int).to_numpy(), pseudo.astype(int).to_numpy()])
     w = np.concatenate([np.ones(len(win)), np.full(len(pseudo), weight)])

@@ -9,7 +9,8 @@ Per ogni cliente lasciato fuori maestri, soglie e studente si addestrano solo su
 degli altri 39; i clienti senza etichetta sono fissi (le loro feature non dipendono dal dev).
 Capacity (geo_b) riaddestrato senza il cliente lasciato fuori, come tutto_loo.
 
-Uso: python -m src.eval.loo_pseudo [--unlabelled data/clean/unlabelled_features.parquet]
+Uso: python -m src.eval.loo_pseudo [--modes all|m1,m2] [--out loo_pseudo.csv] [--unlabelled ...]
+Altri studenti (STUDENTS): s<soglia>[_bal]_w<peso>, es. s80_bal_w1 = 0,8/0,2, bilanciate, peso 1.
 Stampa <= 10 righe; tabella in outputs/loo_pseudo.csv, previsioni in outputs/loo_pseudo_<modo>.csv.
 """
 from __future__ import annotations
@@ -30,7 +31,11 @@ from src.loading.load import load_series  # noqa: E402
 from src.models import capacity, capacity_blend  # noqa: E402
 from src.models import pseudo_label as pl  # noqa: E402
 
-STUDENTS = {"student_90": (0.9, 0.1), "student_95": (0.95, 0.05)}
+# nome -> (soglia TRUE, soglia FALSE, peso delle pseudo-etichette, bilanciate)
+STUDENTS = {"student_90": (0.9, 0.1, 0.3, False), "student_95": (0.95, 0.05, 0.3, False)}
+STUDENTS.update({f"s{int(hi * 100)}{'_bal' if bal else ''}_w{w:g}": (hi, round(1 - hi, 2), w, bal)
+                 for hi in (0.9, 0.8, 0.7) for bal in (False, True) for w in (0.3, 1.0)})
+DEFAULT_MODES = ["regola", "lr", "student_90", "student_95"]
 MODES = ["regola", "lr", *STUDENTS]
 
 
@@ -49,7 +54,8 @@ def make_fit_predict(mode: str, win: pd.DataFrame, cap: pd.DataFrame, U: pd.Data
                 models[cid] = pl.fit_lr(tr, tr["y"])
                 log[cid] = (0, 0)
             else:
-                models[cid], pseudo = pl.fit_student(tr, U, *STUDENTS[mode])
+                hi, lo, w, bal = STUDENTS[mode]
+                models[cid], pseudo = pl.fit_student(tr, U, hi, lo, w, bal)
                 log[cid] = (int(pseudo.sum()), int((~pseudo).sum()))
         if not models[cid].proba(pd.DataFrame([f["det"]]))[0] > 0.5:
             return {"pv_installed": False}
@@ -91,9 +97,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--series", default="data/clean/dev.parquet")
     ap.add_argument("--labels", default=None)
     ap.add_argument("--unlabelled", default="data/clean/unlabelled_features.parquet")
-    ap.add_argument("--modes", default=",".join(MODES))
+    ap.add_argument("--modes", default=",".join(DEFAULT_MODES), help="all: tutti i modi")
+    ap.add_argument("--out", default="loo_pseudo.csv", help="tabella in outputs/")
     a = ap.parse_args(argv)
-    modes = a.modes.split(",")
+    modes = MODES if a.modes == "all" else a.modes.split(",")
 
     series, labels = load_series(a.series), load_labels(find_labels(a.labels))
     labels = labels[labels["customer_id"].isin(series["customer_id"].unique())].reset_index(drop=True)
@@ -133,7 +140,7 @@ def main(argv: list[str]) -> int:
         r["boot_diff_5_95"] = f"[{lo:+.2f}; {hi:+.2f}]"
         r["boot_share_better"] = round(share, 3)
     out = pd.DataFrame(rows)
-    out.to_csv(ROOT / "outputs" / "loo_pseudo.csv", index=False)
+    out.to_csv(ROOT / "outputs" / a.out, index=False)
     print(out.drop(columns=[c for c in ("fixed", "new_errors") if c in out]).round(3).to_string(index=False))
     if "fixed" in out:
         print(out[["mode", "fixed", "new_errors"]].to_string(index=False))
