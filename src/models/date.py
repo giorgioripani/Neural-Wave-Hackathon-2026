@@ -1,9 +1,15 @@
 """Task 2: data di installazione del fotovoltaico (impianto iniziale).
 
-Segnale: midday_ratio = consumo a mezzogiorno / consumo di notte, per giorno.
-Con il fotovoltaico i prelievi a mezzogiorno calano: il livello di midday_ratio
-fa un salto verso il basso alla data di messa in servizio. Lo cerchiamo con un
-change point (ruptures, un solo salto) sul livello della serie giornaliera.
+Segnale: midday_ratio = consumo medio a mezzogiorno / consumo medio di notte, per
+giorno UTC. Con il fotovoltaico i prelievi a mezzogiorno calano: il log del rapporto
+fa un gradino verso il basso alla data di messa in servizio.
+
+Metodo usato (estimate = estimate_v2): regressione del log del rapporto su
+costante + stagionalita' annuale (sin/cos) + gradino, provando ogni data candidata;
+vince quella con l'errore quadratico minimo. Se nessun gradino migliora l'errore
+di almeno il 5%, ritorna il primo giorno (impianto gia' presente o nessun salto).
+estimate_v1 (change point ruptures) e estimate_v3 (gradino stagionale) restano
+per confronto: risultati in docs/LOG.md.
 
 Finestre FISSE in UTC, da timestamp_epoch (niente sole/alba/tramonto):
 - mezzogiorno: 10:00-13:00 UTC (= 11-14 locali in inverno, 12-15 in estate)

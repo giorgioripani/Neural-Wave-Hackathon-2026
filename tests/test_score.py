@@ -8,7 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.eval.score import capacity_score, date_score, load_labels, official_score, read_predictions  # noqa: E402
+from src.eval.score import capacity_score, date_score, load_labels, official_score, read_predictions, score_dates  # noqa: E402
 
 
 
@@ -129,3 +129,17 @@ def test_prepare_sort_flag(tmp_path):
     assert pd.read_parquet(dst)["customer_id"].tolist() == ["POD002", "POD001"]  # ordine del CSV
     r, dst = run_prepare(tmp_path, body, "--sort")
     assert pd.read_parquet(dst)["customer_id"].tolist() == ["POD001", "POD002"]
+
+
+def test_date_score():
+    assert date_score("2024-05-01", "2024-05-01") == 1.0
+    assert date_score("2024-05-16", "2024-05-01") == pytest.approx(0.5)
+    assert date_score("2024-04-16", "2024-05-01") == pytest.approx(0.5)
+    assert date_score("2024-07-01", "2024-05-01") == 0.0
+    assert date_score("", "2024-05-01") == 0.0
+
+
+def test_score_dates_dev(tmp_path):
+    lab = labels(tmp_path)
+    assert score_dates({"POD001": "2024-05-16"}, lab) == pytest.approx(0.5 / 3)  # 3 positivi, 2 senza previsione
+    assert score_dates({"POD001": "2024-05-01", "POD002": "2023-03-10", "POD004": "2022-07-01"}, lab) == 1.0
