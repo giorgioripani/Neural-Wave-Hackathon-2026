@@ -29,14 +29,15 @@ Consegna: domenica 18 ottobre, ore 11:00. `python inference.py path/test.csv` de
   `python src/loading/prepare_data.py <csv> data/clean/<nome>.parquet`. Il file da 7,9 GB va letto a blocchi (`chunksize`) o con Polars/DuckDB: non caricarlo intero in memoria.
 - In `inference.py` NON scartare nessun cliente: una riga di output per ogni `customer_id` del test.
 - Ora legale: esistono giorni da 92 e da 100 misure. Ordinare con `timestamp_epoch`. Mai assumere 96 righe al giorno.
+- kWh negativi (errori di misura, rarissimi): si mettono a 0, senza togliere righe. Lo fa gia` `inference.py` in lettura; nello sviluppo lo fa il caricamento di Andrea. kWh mancanti (NaN): lasciarli NaN e usare medie/mediane che li ignorano, MAI riempirli con 0.
 - `customer_id` sempre come stringa. Dati fuori da Git (`data/` è nel `.gitignore`).
 - Curve senza etichetta: NON sono esempi di "no", possono avere il fotovoltaico. Pseudo-etichette permesse: solo previsioni molto sicure, e la valutazione si fa SOLO sui 40 clienti etichettati.
 
-## Formato di uscita (dal README dei dati)
+## Formato di uscita (confermato dagli organizzatori)
 UTF-8, separatore PUNTO E VIRGOLA, punto decimale, `TRUE`/`FALSE`, date AAAA-MM-GG, data e kWp vuoti se `pv_installed=FALSE`.
-Intestazioni esatte: `customer_id,pv_installed,pv_installation_date,pv_capacity_kwp`
-e `customer_id,extension_date,pv_capacity_after_extension_kwp` (una riga per estensione, kWp TOTALI dopo l'estensione).
-[Il PDF diceva punto e virgola: vale il README salvo diversa conferma degli organizzatori.]
+Intestazioni esatte: `customer_id;pv_installed;pv_installation_date;pv_capacity_kwp`
+e `customer_id;extension_date;pv_capacity_after_extension_kwp` (una riga per estensione, kWp TOTALI dopo l'estensione).
+In lettura il separatore del CSV di test va rilevato in automatico.
 
 ## Struttura e proprietari (un modulo a persona)
 | Cartella | Persona | Contenuto |
