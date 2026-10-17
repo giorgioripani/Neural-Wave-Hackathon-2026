@@ -324,3 +324,21 @@ def test_call_capacity_rejects_inf():
 
     with pytest.raises(ValueError):
         inference.call_capacity(Fake, pd.DataFrame(), "2024-01-01")
+
+
+def test_dirty_synthetic_csv(tmp_path, monkeypatch):
+    """tests/data/test_sporco.csv (sintetico): epoch vuoti e testuali, kWh testuali, duplicati,
+    id con zeri iniziali, un cliente con sole righe non valide -> nessun crash, una riga per id."""
+    import inference
+    src = ROOT / "tests" / "data" / "test_sporco.csv"
+    monkeypatch.chdir(tmp_path)
+    assert inference.main([str(src)]) == 0
+    pred = (tmp_path / "predictions.csv").read_text(encoding="utf-8").splitlines()
+    assert pred[0] == PRED_HEADER
+    ids = [line.split(";")[0] for line in pred[1:]]
+    assert sorted(ids) == ["000123", "BADONLY", "POD9001", "POD9002"]
+    for line in pred[1:]:
+        cid, pv, date, kwp = line.split(";")
+        assert pv in ("TRUE", "FALSE")
+        assert (date == "" and kwp == "") if pv == "FALSE" else (len(date) == 10 and float(kwp) > 0)
+    assert (tmp_path / "pv_extensions_predictions.csv").read_text(encoding="utf-8").startswith(EXT_HEADER)
