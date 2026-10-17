@@ -55,7 +55,8 @@ TEXT = {
     "skip_detect": "fig2_detect saltata: la colonna '{feat}' (feature di artifacts/detect_params.json) non c'e` in {path}",
     # fig_report_a e fig. 4
     "days_ratio": r"$\log$(midday / night)", "days": "daily values",
-    "model_v2": "v2 model", "true_date": "true date", "est_date": "estimated date",
+    "model_v2": "v2 model", "weekly_median": "weekly median", "midday_zero": r"midday $\approx$ 0",
+    "note_floor": "{n} days with midday \u2248 0 drawn as marks on the bottom edge", "true_date": "true date", "est_date": "estimated date",
     "typical": "Typical case: error {err}", "worst": "Worst case: error {err}",
     # fig_report_b
     "true_kwp": "true kWp", "est_kwp": "estimated kWp", "pm50": r"$\pm 50\%$", "identity": "estimated = true",
@@ -309,6 +310,49 @@ def check_overlaps(fig, tol: float = 1.0) -> list[str]:
                       & (p[:, 1] > bb.y0 + tol) & (p[:, 1] < bb.y1 - tol)) if len(p) else np.array([])
             if inside.any():
                 found.append(f"{name} covers data of ax{i}")
+    return found
+
+
+def _is_straight(xy: np.ndarray, tol: float = 0.5) -> bool:
+    """Linea dritta in pixel (diagonale, +-50%, axvline): riferimento tagliato apposta dagli assi."""
+    if len(xy) <= 2:
+        return True
+    a, b = xy[0], xy[-1]
+    d = b - a
+    norm = float(np.hypot(*d))
+    if norm == 0:
+        return True
+    dist = np.abs(d[0] * (xy[:, 1] - a[1]) - d[1] * (xy[:, 0] - a[0])) / norm
+    return bool(dist.max() <= tol)
+
+
+def check_out_of_bounds(fig, tol: float = 1.0) -> list[str]:
+    """Linee e punti disegnati fuori dai limiti degli assi (anche se tagliati dal
+    disegno). Le linee dritte (riferimenti come diagonali e linee verticali) sono
+    escluse. -> lista di descrizioni (vuota se tutto e` dentro)."""
+    fig.canvas.draw()
+    found = []
+    for i, ax in enumerate(fig.axes):
+        bb = ax.bbox
+
+        def out(xy):
+            return ((xy[:, 0] < bb.x0 - tol) | (xy[:, 0] > bb.x1 + tol)
+                    | (xy[:, 1] < bb.y0 - tol) | (xy[:, 1] > bb.y1 + tol))
+
+        for k, line in enumerate(ax.lines):
+            if not line.get_visible():
+                continue
+            xy = line.get_transform().transform(np.asarray(line.get_xydata(), float))
+            xy = xy[np.isfinite(xy).all(axis=1)]
+            if len(xy) and not _is_straight(xy) and out(xy).any():
+                found.append(f"ax{i} line {k} ({int(out(xy).sum())} of {len(xy)} points outside the axes)")
+        for k, col in enumerate(ax.collections):
+            if not col.get_visible() or not isinstance(col, PathCollection):
+                continue
+            xy = col.get_offset_transform().transform(np.asarray(col.get_offsets(), float))
+            xy = xy[np.isfinite(xy).all(axis=1)]
+            if len(xy) and out(xy).any():
+                found.append(f"ax{i} points {k} ({int(out(xy).sum())} of {len(xy)} outside the axes)")
     return found
 
 

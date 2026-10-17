@@ -20,14 +20,27 @@ SERIES_PV = {"POD0000": 300, "POD0002": 400, "POD0004": 100, "POD0006": 600}  # 
 LOO_ERR = {"POD0000": 0, "POD0002": 3, "POD0004": 12, "POD0006": 25, "POD0008": 60, "POD0010": 200}
 
 
-def _series(cid, install_day, days=730, seed=0):
+# Fig. 4 (fig_date.plot_case, non corretta su richiesta): la curva v2 puo` uscire dai
+# percentili 1-99 dell'asse y; check_out_of_bounds lo segnala. Unico avviso ammesso.
+KNOWN_OUT = {"fig4_date_examples"}
+
+
+def _known(line: str) -> bool:
+    return any(line.startswith(f"WARNING {k}: out of axes") for k in KNOWN_OUT)
+
+
+FLOOR_DAYS = range(500, 510)  # POD0002 (il caso tipico): mezzogiorno a zero in questi giorni
+
+
+def _series(cid, install_day, days=730, seed=0, floor_days=()):
     rng = np.random.default_rng(seed)
     idx = pd.date_range(START, periods=days * 96, freq="15min", tz="UTC")
     day = np.arange(len(idx)) // 96
     mid = (idx.hour >= 10) & (idx.hour < 13)
     pv = mid & (day >= install_day) if install_day is not None else np.zeros(len(idx), bool)
-    kwh = np.where(pv, 0.1, 0.3) + 0.02 * rng.standard_normal(len(idx))
-    return pd.DataFrame({"customer_id": cid, "ts_epoch": idx.astype("int64") // 10**9, "kwh": np.clip(kwh, 0, None)})
+    kwh = np.clip(np.where(pv, 0.1, 0.3) + 0.02 * rng.standard_normal(len(idx)), 0, None)
+    kwh[mid & np.isin(day, list(floor_days))] = 0.0
+    return pd.DataFrame({"customer_id": cid, "ts_epoch": idx.astype("int64") // 10**9, "kwh": kwh})
 
 
 def _day(d):
@@ -37,7 +50,8 @@ def _day(d):
 @pytest.fixture(scope="module")
 def data(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("viz")
-    series = pd.concat([_series(c, d, seed=i) for i, (c, d) in enumerate(SERIES_PV.items())]
+    series = pd.concat([_series(c, d, seed=i, floor_days=FLOOR_DAYS if c == "POD0002" else ())
+                        for i, (c, d) in enumerate(SERIES_PV.items())]
                        + [_series("POD0001", None, seed=9), _series("POD0012", 0, seed=10)], ignore_index=True)
     lab_ids = list(SERIES_PV) + ["POD0001", "POD0012"]
     labels = pd.DataFrame({"customer_id": lab_ids, "pv_installed": [True] * 4 + [False, True],
@@ -94,7 +108,8 @@ def checked(monkeypatch):
 
     def hook(name, fig):
         texts = [t.get_text() for t in fig.findobj(Text)]
-        found[name] = {"overlaps": style.check_overlaps(fig), "ids": [t for t in texts if "POD" in t]}
+        found[name] = {"overlaps": style.check_overlaps(fig), "ids": [t for t in texts if "POD" in t],
+                       "out": style.check_out_of_bounds(fig)}
     monkeypatch.setattr(style, "SAVE_HOOKS", [hook])
     yield found
     style.setup(False)
@@ -104,8 +119,8 @@ def _ok(paths):
     assert paths and all(Path(p).is_file() and Path(p).stat().st_size > 0 for p in paths)
 
 
-def _clean(found):
-    bad = {k: v for k, v in found.items() if v["overlaps"] or v["ids"]}
+def _clean(found, skip_out=()):
+    bad = {k: v for k, v in found.items() if v["overlaps"] or v["ids"] or (v["out"] and k not in skip_out)}
     assert not bad, bad
 
 
@@ -131,7 +146,7 @@ def test_presentation_and_extra_figures(data, tmp_path, checked, talk):
                         data["loo"], tmp_path))
     _ok(fig_ext.make(data["out"] / "inject_ext" / "summary.csv", data["out"] / "ext_dev_diag.csv", tmp_path))
     assert len(checked) == 5
-    _clean(checked)
+    _clean(checked, skip_out=KNOWN_OUT)
 
 
 def test_tables(data, tmp_path):
@@ -223,9 +238,7 @@ def _make_all_args(data, tmp_path):
 
 
 @pytest.mark.parametrize("which, expected", [
-    ("report", {"fig_report_a.pdf", "fig_report_b.pdf", "fig_report_c.pdf", "fig1_overview.pdf",
-                "fig1_overview_compact.pdf", "tab_main_results.tex", "tab_date_versions.tex",
-                "tab_capacity_methods.tex"}),
+    ("report", {"fig_report_a.pdf", "fig_report_b.pdf", "fig_report_c.pdf"}),
     ("talk", {"fig1_overview.png", "fig_report_a.png", "fig_report_b.png", "fig_report_c.png",
               "fig4_date_examples.png", "fig6_date_forest.png", "fig8_score.png"}),
 ])
@@ -235,16 +248,19 @@ def test_make_all_sets(data, tmp_path, capsys, which, expected):
     lines = capsys.readouterr().out.strip().splitlines()
     paths = [x for x in lines if x.startswith(str(tmp_path))]
     assert {Path(x).name for x in paths} == expected and all(Path(x).stat().st_size > 0 for x in paths)
-    assert not [x for x in lines if x.startswith("WARNING")]
-    assert any(x.startswith("fig1_overview:") and "1 excluded" in x for x in lines)
+    assert not [x for x in lines if x.startswith("WARNING") and not _known(x)], lines
+    assert f"fig_report_a: {len(FLOOR_DAYS)} days with midday \u2248 0 drawn as marks on the bottom edge" in lines
 
 
 def test_make_all_all_and_missing(data, tmp_path, capsys):
     from src.viz import make_all
     args = _make_all_args(data, tmp_path)
     assert make_all.main(args + ["--set", "all"]) == 0
-    names = {Path(x).name for x in capsys.readouterr().out.splitlines() if x.startswith(str(tmp_path))}
-    assert {"fig2_detect.pdf", "fig7_ext.pdf", "tab_detect_variants.tex", "fig8_score.png"} <= names
+    out = capsys.readouterr().out.splitlines()
+    names = {Path(x).name for x in out if x.startswith(str(tmp_path))}
+    assert {"fig2_detect.pdf", "fig7_ext.pdf", "tab_detect_variants.tex", "fig8_score.png", "fig1_overview.pdf",
+            "fig1_overview_compact.pdf", "tab_main_results.tex", "tab_capacity_methods.tex"} <= names
+    assert any(x.startswith("fig1_overview:") and "1 excluded" in x for x in out)
     assert len(names) == 8 + 7 + 3
     with pytest.raises(SystemExit, match="loo_pipeline --modes tutto_loo"):
         make_all.main(args[:4] + ["--outputs", str(tmp_path / "vuoto"), "--set", "talk"])
@@ -276,3 +292,42 @@ def test_tick_labels_use_decimal(monkeypatch, tmp_path):
     labels = [t.get_text() for t in ax.get_yticklabels() if t.get_text()]
     assert any("0,1" in t for t in labels) and not any("0.1" in t for t in labels)
     _ok([style.save(fig, "dec", tmp_path, "png")])
+
+
+def test_report_a_floor_and_limits(data):
+    one = data["series"][data["series"]["customer_id"] == "POD0002"]
+    curve = fig_report.report_a_curve(one)
+    assert int(curve["floor"].sum()) == len(FLOOR_DAYS)
+    floor_dates = set(curve.loc[curve["floor"], "date"])
+    assert floor_dates == {_day(d) for d in FLOOR_DAYS}
+    weekly = fig_report.weekly_log_median(curve)
+    lo, hi = fig_report.report_a_limits(curve, weekly)
+    assert lo < curve["fitted"].min() and curve["fitted"].max() < hi  # il modello sta tutto dentro
+    assert lo < weekly["value"].min() and weekly["value"].max() < hi
+    # i giorni al pavimento non allargano i limiti: log(EPS) e` molto sotto
+    assert curve.loc[curve["floor"], "log_raw"].max() < lo
+
+
+def test_report_a_limits_include_model_beyond_percentiles():
+    dates = pd.date_range("2023-01-01", periods=200)
+    curve = pd.DataFrame({"date": dates, "log_raw": np.linspace(-1, 1, 200), "floor": False,
+                          "fitted": np.r_[np.full(100, 3.0), np.full(100, -4.0)]})  # oltre i percentili
+    weekly = pd.DataFrame({"date": dates[:2], "value": [0.0, 0.0]})
+    lo, hi = fig_report.report_a_limits(curve, weekly)
+    assert lo == pytest.approx(-4.0 - 0.05 * 7.0) and hi == pytest.approx(3.0 + 0.05 * 7.0)
+
+
+def test_check_out_of_bounds():
+    import matplotlib.pyplot as plt
+    fig, ax = style.figure(figsize=(3, 2))
+    x = np.linspace(0, 1, 50)
+    ax.plot(x, np.sin(6 * x) * 2)            # curva oltre i limiti
+    ax.plot(x, 5 * x - 2)                    # linea dritta di riferimento: non segnalata
+    ax.scatter([0.5, 0.5], [0.0, 3.0])       # un punto fuori
+    ax.set_ylim(-1, 1)
+    found = style.check_out_of_bounds(fig)
+    assert any(f.startswith("ax0 line 0") for f in found) and not any(f.startswith("ax0 line 1") for f in found)
+    assert any("points" in f and "1 of 2" in f for f in found)
+    ax.set_ylim(-2.5, 3.5)
+    assert style.check_out_of_bounds(fig) == []
+    plt.close(fig)

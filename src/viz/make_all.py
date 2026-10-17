@@ -7,17 +7,20 @@ Uso (dalla radice del repo):
         [--artifacts artifacts] [--fig-dir outputs/figures] [--tab-dir outputs/tables]
         [--ext-window last730|full]
 
---set report (default): fig_report_a/b/c, fig1_overview (pagina intera) e
-    fig1_overview_compact, tab_main_results, tab_date_versions, tab_capacity_methods; PDF.
+--set report (default): SOLO fig_report_a, fig_report_b e fig_report_c, in PDF.
 --set talk: fig1_overview, fig_report_a/b/c, fig4_date_examples, fig6_date_forest,
     fig8_score; PNG con caratteri grandi (style.setup(talk=True)).
---set all: report + talk + fig2_detect, fig7_ext e tab_detect_variants (PDF).
+--set all: report + talk + fig1_overview (pagina intera) e fig1_overview_compact,
+    tab_main_results, tab_date_versions, tab_capacity_methods, fig2_detect, fig7_ext e
+    tab_detect_variants (PDF).
 
 Fonte unica dei risultati: outputs/loo_pipeline_serie_intera_tutto_loo.csv
 (python -m src.eval.loo_pipeline --modes tutto_loo). Le figure 1, 4 e fig_report_a
 leggono anche la serie di sviluppo (solo medie per cliente). Se manca un input lo
 script si ferma ed elenca chi lo genera. Stampa i percorsi dei file creati, gli
-avvisi di sovrapposizione (style.check_overlaps) e i clienti esclusi dalla fig. 1.
+avvisi (style.check_overlaps: testi sovrapposti, legende sui dati;
+style.check_out_of_bounds: linee o punti fuori dagli assi), i clienti esclusi dalla
+fig. 1 e i giorni con mezzogiorno ~ 0 di fig_report_a.
 """
 import argparse
 import json
@@ -32,13 +35,14 @@ from src.loading.load import load_series  # noqa: E402
 from src.viz import fig_capacity, fig_date, fig_detect, fig_ext, fig_overview, fig_report, fig_score  # noqa: E402
 from src.viz import style  # noqa: E402
 from src.viz.inputs import PROTOCOLS, missing, required  # noqa: E402
-from src.viz.style import DOUBLE, SINGLE, check_overlaps, setup  # noqa: E402
+from src.viz.style import DOUBLE, SINGLE, check_out_of_bounds, check_overlaps, setup  # noqa: E402
 
 DATE_FINALS = [f"date_final_{p}" for p in PROTOCOLS]
 NEEDS = {
-    "report": ["series", "loo", "capacity_csv", *DATE_FINALS],
+    "report": ["series", "loo"],
     "talk": ["series", "loo", *DATE_FINALS],
-    "extra": ["window_features", "detect_params", "detect_scores", "loo", "inject_summary", "ext_diag"],
+    "extra": ["series", "loo", "capacity_csv", *DATE_FINALS, "window_features", "detect_params", "detect_scores",
+              "inject_summary", "ext_diag"],
 }
 SETS = {"report": ["report"], "talk": ["talk"], "all": ["report", "talk", "extra"]}
 
@@ -51,11 +55,6 @@ def run_report(p, series, labels, a, fig_dir, tab_dir) -> list:
     made = fig_report.make_a(series, p["loo"], fig_dir, "pdf")
     made += fig_report.make_b(p["loo"], fig_dir, "pdf")
     made += fig_report.make_c(p["loo"], fig_dir, "pdf")
-    made += fig_overview.make(series, labels, fig_dir, "pdf", width=DOUBLE, name="fig1_overview")
-    made += fig_overview.make(series, labels, fig_dir, "pdf", width=SINGLE, name="fig1_overview_compact")
-    made += fig_score.make_table(p["loo"], tab_dir)
-    made += fig_date.make_table({proto: p[f"date_final_{proto}"] for proto in PROTOCOLS}, tab_dir)
-    made += fig_capacity.make_table(capacity_csvs(a.outputs), tab_dir, fig_capacity.chosen_method(a.artifacts))
     return made
 
 
@@ -71,7 +70,12 @@ def run_talk(p, series, labels, a, fig_dir, tab_dir) -> list:
 
 
 def run_extra(p, series, labels, a, fig_dir, tab_dir) -> list:
-    made = fig_detect.make(p["window_features"], p["detect_params"], p["loo"], fig_dir, "pdf")
+    made = fig_overview.make(series, labels, fig_dir, "pdf", width=DOUBLE, name="fig1_overview")
+    made += fig_overview.make(series, labels, fig_dir, "pdf", width=SINGLE, name="fig1_overview_compact")
+    made += fig_score.make_table(p["loo"], tab_dir)
+    made += fig_date.make_table({proto: p[f"date_final_{proto}"] for proto in PROTOCOLS}, tab_dir)
+    made += fig_capacity.make_table(capacity_csvs(a.outputs), tab_dir, fig_capacity.chosen_method(a.artifacts))
+    made += fig_detect.make(p["window_features"], p["detect_params"], p["loo"], fig_dir, "pdf")
     feat = json.loads(Path(p["detect_params"]).read_text(encoding="utf-8")).get("feature")
     try:
         made += fig_detect.make_table(p["detect_scores"], tab_dir, feat)
@@ -119,7 +123,9 @@ def main(argv=None) -> int:
 
     made, warnings = [], []
     style.NOTES.clear()
-    style.SAVE_HOOKS[:] = [lambda name, fig: warnings.extend(f"WARNING {name}: overlap {d}" for d in check_overlaps(fig))]
+    style.SAVE_HOOKS[:] = [lambda name, fig: warnings.extend(
+        [f"WARNING {name}: overlap {d}" for d in check_overlaps(fig)]
+        + [f"WARNING {name}: out of axes {d}" for d in check_out_of_bounds(fig)])]
     try:
         for g in groups:
             runner, talk = RUNNERS[g]
