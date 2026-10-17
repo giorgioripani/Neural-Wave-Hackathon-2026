@@ -96,28 +96,8 @@ Diagnosi della data rubata dall’estensione: 26 casi su 27 hanno l’installazi
 
 refine_date0 (detect sul tratto prima del gradino) per la data principale: D 0,556 contro 0,597 della v2 (3 clienti peggiorati) → respinto. Per le estensioni: data rubata 27→6 su 114, recall 0,17→0,33, F1_ext atteso 0,29→0,50 → da usare solo nella ricerca delle estensioni, se i falsi allarmi sui clienti reali restano bassi.
 
-Ho fatto le tre modifiche, e in inject_ext_dev.py ho corretto il problema che mi hai chiesto di verificare. pytest passa (155 test), e come chiesto non ho eseguito nulla sui dati veri.
+- 2026-10-17 Leonardo (agente Claude Code): predict_extensions_refined (refine_date0 solo come inizio della ricerca delle estensioni, date0 e kwp0 invariati), --refine in run_ext_dev.py e inject_ext_dev.py (anche sulle serie originali), _kwp_ratio con s1 non stimabile se l'installazione e` al primo giorno (kWp di riserva 1,1 x kwp0); test in tests/test_refine.py.
 
-Verifica di inject_ext_dev.py: le serie originali, quelle dei falsi allarmi, non passavano da refine_date0. Ora ci passano. La stampa riporta i motivi separati: "Motivi refine: iniezioni …; originali …".
-
-Cambio di comportamento da confermare: ho allineato --refine di inject_ext_dev.py a predict_extensions_refined. La data corretta serve solo come inizio della ricerca delle estensioni; date0 e kwp0 restano quelli senza refine.
-
-Prima, con --refine, la data corretta sostituiva date0 sulle serie iniettate.
-Ora le righe "entro 30 gg" e "data vera prima/dopo" usano la data ristimata senza refine. L'inizio della ricerca va nella colonna date0_ext.
-Le date da iniettare si scelgono sempre dal date0 senza refine, quindi le iniezioni restano le stesse con e senza l'opzione.
-src/models/run_ext_dev.py --refine: date0 viene da date.estimate e kwp0 da capacity.estimate(serie, date0). Poi date0_ext, motivo = refine_date0(serie, date0), e le estensioni si cercano da date0_ext. I falsi allarmi si stampano come prima; il conteggio dei motivi è sulla riga "Clienti analizzati", per restare entro 10 righe. Il CSV ha in più date0_ext e refine_reason.
-
-predict_extensions_refined(series, date0, kwp0) in src/models/extensions.py: applica refine_date0, poi predict_extensions partendo dalla data corretta, e restituisce solo la lista delle estensioni. date0 e kwp0 non vengono toccati.
-
-Correzione necessaria in _kwp_ratio: se l'inizio della ricerca è il primo giorno (caso "pv_gia_presente"), il gradino dell'installazione è una colonna tutta a 1, identica alla costante, e s1 non è stimabile. Ora la funzione lo riconosce e kwp_after prende il valore di riserva, 1,1 × kwp0. Senza questo controllo il risultato sarebbe stato un numero arbitrario.
-
-Test nuovi in tests/test_refine.py, su una serie con fotovoltaico già presente dall'inizio ed estensione al giorno 400:
-
-Senza refine non si trova nulla; con detect finto a 0,9 si trova l'estensione, con kWp 4,4; con detect a 0,1 il risultato è uguale a predict_extensions.
-run_ext_dev.main() con e senza --refine: con l'opzione si trova l'estensione, i falsi allarmi sono 0 e la stampa resta entro 10 righe.
-In inject_ext_dev.py le serie originali passano dal refine e date0 non cambia.
-_kwp_ratio: s1 non stimabile con l'installazione al primo giorno; rapporto circa 1,5 con l'installazione visibile.
-Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova ma i suoi kWp sono sempre 1,1 × kwp0. In più kwp0 è stato stimato su date0, che in quel caso è il gradino dell'estensione, quindi probabilmente misura l'estensione e non l'impianto iniziale.
 ## 17/10 — Punteggio LOO della pipeline intera (Andrea, con agente Claude)
 Agente usato per scrivere src/eval/loo_pipeline.py: pipeline di inference.py dentro validate.py (2 anni, 5 giri, seed 42).
 Artefatti attuali 79,19 ± 2,92; soglie detect ricalcolate senza il cliente 78,10 ± 2,42; detect e capacity ricalcolati 77,93 ± 2,42 (F1 0,909, D 0,608, P 0,439). La perdita per l'in-sample è piccola (circa 1,3 punti).
