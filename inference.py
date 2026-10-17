@@ -64,36 +64,29 @@ def default_kwp() -> float:
 DEFAULT_KWP = default_kwp()
 
 
-def sniff_sep(path: Path) -> str:
-    """Separatore dalla prima riga (intestazione): ; , o tab."""
+def read_test(path: Path) -> tuple[pd.DataFrame, list[str]]:
+    """CSV del test -> (df, all_ids) con src.loading.load.load_test: lettore tollerante
+    (righe con epoch non valido tolte, kWh non numerici NaN, separatore e decimale
+    riconosciuti). df ha i nomi del file e quelli dell'interfaccia (kwh, ts_epoch,
+    ts_local); all_ids = tutti gli id del file, anche quelli rimasti senza righe."""
+    from src.loading.load import load_test
+    return load_test(path)
+
+
+def emergency_ids(path: Path) -> list[str]:
+    """Solo gli id del file, con il modulo csv (se anche load_test fallisce)."""
+    ids = set()
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        head = f.readline()
-    counts = {s: head.count(s) for s in (";", ",", "\t")}
-    return max(counts, key=counts.get)
-
-
-def read_test(path: Path) -> pd.DataFrame:
-    """CSV del test -> customer_id (str), ts_epoch (int), kwh (float), ts_local (str).
-
-    Tiene anche i nomi originali (energy_consumption_kwh, timestamp_epoch) cosi`
-    ogni modulo trova le colonne che si aspetta.
-    """
-    sep = sniff_sep(path)
-    df = pd.read_csv(path, sep=sep, encoding="utf-8-sig",
-                     dtype={"customer_id": str, "timestamp_local": str})
-    df.columns = [c.strip() for c in df.columns]
-    kwh = df["energy_consumption_kwh"]
-    if kwh.dtype == object:  # decimale con la virgola
-        kwh = pd.to_numeric(kwh.str.replace(",", ".", regex=False), errors="coerce")
-    # Regola del team: kWh negativi (errori di misura) -> 0; righe tenute, NaN lasciati NaN.
-    df["energy_consumption_kwh"] = kwh.astype(float).clip(lower=0)
-    df["customer_id"] = df["customer_id"].str.strip()
-    df = df.sort_values(["customer_id", "timestamp_epoch"], kind="stable").reset_index(drop=True)
-    df["kwh"] = df["energy_consumption_kwh"]
-    df["ts_epoch"] = df["timestamp_epoch"].astype("int64")
-    df["ts_local"] = df.get("timestamp_local", "")
-    print(f"Letto {path.name}: separatore {sep!r}, {len(df)} righe")
-    return df
+        lines = iter(f)
+        head = next(lines, "")
+        sep = max((";", ",", "\t"), key=head.count)
+        cols = [c.strip().strip('"').lower() for c in head.rstrip("\r\n").split(sep)]
+        i = cols.index("customer_id") if "customer_id" in cols else 0
+        for ln in lines:
+            parts = ln.rstrip("\r\n").split(";" if ";" in ln else sep)
+            if len(parts) > i and parts[i].strip().strip('"'):
+                ids.add(parts[i].strip().strip('"'))
+    return sorted(ids)
 
 
 def load_module(name: str):
@@ -152,18 +145,26 @@ def call_extensions(mod, series: pd.DataFrame, date: str, kwp: float) -> list[di
     return out
 
 
-def first_day(series: pd.DataFrame) -> str:
-    return pd.to_datetime(series["ts_epoch"].min(), unit="s", utc=True).strftime("%Y-%m-%d")
+FALLBACK_DATE = "2024-01-01"  # solo se un cliente non ha nessuna misura valida
+
+
+def first_day(series: pd.DataFrame, default: str = FALLBACK_DATE) -> str:
+    ep = series["ts_epoch"].min() if len(series) else None
+    return pd.to_datetime(ep, unit="s", utc=True).strftime("%Y-%m-%d") if pd.notna(ep) else default
 
 
 # ---------------------------------------------------------------------------
 
-def predict_all(df: pd.DataFrame, used: dict | None = None) -> list[dict]:
-    """Una riga per cliente. Se `used` e` un dict, vi scrive quanti clienti
-    hanno usato la riserva di detect, date e capacity."""
+def predict_all(df: pd.DataFrame, used: dict | None = None, customers: list[str] | None = None) -> list[dict]:
+    """Una riga per cliente di `customers` (default: quelli di df), anche senza
+    righe valide in df. Se `used` e` un dict, vi scrive quanti clienti hanno usato
+    la riserva di detect, date e capacity."""
     used = {} if used is None else used
     used.update(detect=0, date=0, capacity=0)
-    customers = df["customer_id"].dropna().unique().tolist()
+    if customers is None:
+        customers = df["customer_id"].dropna().unique().tolist()
+    groups = dict(tuple(df.groupby("customer_id", sort=False)))
+    file_day = first_day(df)
     detect, date_mod, capacity = load_module("detect"), load_module("date"), load_module("capacity")
 
     # Riserva di detect: TRUE per tutti (sul dev "tutti TRUE" vale 57,8 punti, "tutti FALSE" 0).
@@ -184,7 +185,8 @@ def predict_all(df: pd.DataFrame, used: dict | None = None) -> list[dict]:
             print(f"[riserva] detect: {n_missing} clienti senza probabilita', messi TRUE")
 
     rows = []
-    for cid, series in df.groupby("customer_id", sort=False):
+    for cid in customers:
+        series = groups.get(cid, df.iloc[0:0])
         row = {"customer_id": cid, "pv_installed": False, "pv_installation_date": "", "pv_capacity_kwp": ""}
         p = probs.get(cid)
         if pd.isna(p) or p >= PV_THRESHOLD:
@@ -196,7 +198,7 @@ def predict_all(df: pd.DataFrame, used: dict | None = None) -> list[dict]:
                 except Exception as e:
                     warn("date", cid, e)
             if not date:
-                date = first_day(series)
+                date = first_day(series, file_day)
                 used["date"] += 1
             kwp = None
             if capacity is not None:
@@ -232,6 +234,8 @@ def predict_extensions_all(df: pd.DataFrame, rows: list[dict], used: dict | None
     found = []
     for r in pv_rows:
         cid = r["customer_id"]
+        if cid not in by_cid:
+            continue  # nessuna misura valida: nessuna estensione
         try:
             exts = call_extensions(mod, by_cid[cid], r["pv_installation_date"], float(r["pv_capacity_kwp"]))
         except Exception as e:
@@ -265,24 +269,43 @@ def write_outputs(rows: list[dict], ext_rows: list[dict], out_dir: Path = Path("
             w.writerow([r[c] for c in EXT_HEADER])
 
 
+def fallback_rows(ids: list[str]) -> list[dict]:
+    """Ultima riserva: tutti TRUE (sul dev vale 57,8 contro 0 di tutti FALSE)."""
+    return [{"customer_id": c, "pv_installed": True, "pv_installation_date": FALLBACK_DATE,
+             "pv_capacity_kwp": round(DEFAULT_KWP, 2)} for c in ids]
+
+
 def main(argv: list[str]) -> int:
     args = [a for a in argv if not a.startswith("--")]
     if len(args) != 1:
         print("Uso: python inference.py path/test.csv [--debug]", file=sys.stderr)
         return 1
-    df = read_test(Path(args[0]))
-    n_null = int(df["customer_id"].isna().sum())
-    if n_null:
-        print(f"ATTENZIONE: {n_null} righe senza customer_id (nessun cliente a cui attribuirle)")
-    used = {}
-    rows = predict_all(df, used)
-    ext_rows = predict_extensions_all(df, rows, used)
+    path = Path(args[0])
+    used, rows, ext_rows, all_ids = {}, None, [], None
+    try:
+        df, all_ids = read_test(path)
+        rows = predict_all(df, used, all_ids)
+        ext_rows = predict_extensions_all(df, rows, used)
+    except Exception as e:  # rete di sicurezza: predictions.csv va scritto comunque
+        warn("pipeline", "*", e)
+        print("ATTENZIONE: pipeline fallita, si scrive la riserva (tutti TRUE)")
+        if rows is None:
+            ids = all_ids
+            if ids is None:
+                try:
+                    ids = emergency_ids(path)
+                except Exception as e2:
+                    warn("emergency_ids", "*", e2)
+                    ids = []
+            rows = fallback_rows(ids)
+        ext_rows = []
+        used.setdefault("detect", len(rows))
     write_outputs(rows, ext_rows)
     n_pv = sum(r["pv_installed"] for r in rows)
     print(f"predictions.csv: {len(rows)} clienti ({n_pv} con fotovoltaico)")
     print(f"pv_extensions_predictions.csv: {len(ext_rows)} estensioni")
-    print(f"Riserve usate: detect {used['detect']}, date {used['date']}, "
-          f"capacity {used['capacity']}, ext {used['ext']}")
+    print(f"Riserve usate: detect {used.get('detect', 0)}, date {used.get('date', 0)}, "
+          f"capacity {used.get('capacity', 0)}, ext {used.get('ext', 0)}")
     if any(used.values()):
         print("ATTENZIONE: alcune previsioni usano le riserve, controllare i messaggi sopra")
     return 0

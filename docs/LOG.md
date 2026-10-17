@@ -126,3 +126,7 @@ Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo 
 25	Same trees without clamp_summer / random forest (200 trees, depth 3)	0.927 (d2), 0.884 (d3) / 0.857	-	0-2	3-4	Rejected: no gain, deeper models overfit 40 customers
 26	Agent (Claude Code, 2026-10-17): wrote src/models/tree_detect.py (experiment, not in inference) and ran the tree comparison
 27	Agent (Claude Code, 2026-10-17): detect.py safety: invalid epoch rows dropped, per-customer try (failure -> no PV for that customer only), rec_drop missing keeps main proba. LOO unchanged 0.952; 19/19 synthetic edge cases OK
+
+## 17/10 — Lettore tollerante del test (Andrea, con agente Claude, richiesta di Flavio)
+Prima: un epoch vuoto o testo in una riga del test faceva fallire tutto inference.py (read_test fuori da ogni try), e un cliente con sole righe non valide spariva dall'output.
+Ora: src.loading.load.load_test (via veloce come il vecchio read_test; se ci sono righe malformate, lettura come testo con le righe saltate), all_ids da tutte le righe del file, rete di sicurezza in main() (tutti TRUE). fake_test: predictions.csv e estensioni identici byte per byte, 19 s contro 17. Test con CSV sintetici in tests/test_load_validate.py.

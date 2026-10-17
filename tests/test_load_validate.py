@@ -99,3 +99,79 @@ def test_validate_no_leak_and_perfect_oracle():
     assert s2["score"].between(0, 100).all()
     one = series[series["customer_id"] == lab["customer_id"].iloc[0]]
     assert crop(one, pd.Timestamp("2022-01-01"), pd.Timestamp("2022-01-02")).shape[0] == 96
+
+
+# --- load_test: lettore tollerante del test (nessuna eccezione per valori sporchi) ---
+
+from src.loading.load import load_test  # noqa: E402
+
+
+def _test_csv(tmp_path, body, header=HEADER, name="t.csv", bom=False):
+    p = tmp_path / name
+    p.write_text(("﻿" if bom else "") + header + body, encoding="utf-8")
+    return p
+
+
+DIRTY = ("0012;0,5;2024-01-01 01:00:00;1704067200\n"
+         "0012;0,7;2024-01-01 01:15:00;\n"              # epoch vuoto -> riga tolta
+         "0012;0,7;2024-01-01 01:30:00;abc\n"           # epoch testo -> riga tolta
+         "0013;n/a;2024-01-01 01:00:00;1704067200\n"    # kWh testo -> NaN, riga tenuta
+         "0013;-2;2024-01-01 01:15:00;1704068100\n"     # negativo -> 0
+         "0014;0,1;2024-01-01 01:00:00;\n"              # cliente con sole righe non valide
+         " 0015 ;0,2;2024-01-01 01:00:00;1704067200000\n"  # id con spazi, epoch in ms
+         "0015;0,9;2024-01-01 01:00:00;1704067200\n"    # ripetuta (stesso epoch) -> tolta
+         "0016;1;x;1704067200;9;9\n")                   # campi in piu`: riga saltata, cliente tenuto
+
+
+def test_load_test_dirty_rows(tmp_path):
+    df, ids = load_test(_test_csv(tmp_path, DIRTY), verbose=False)
+    assert ids == ["0012", "0013", "0014", "0015", "0016"]   # nessun cliente perso, zeri iniziali tenuti
+    assert sorted(df["customer_id"].unique()) == ["0012", "0013", "0015"]
+    assert len(df[df["customer_id"] == "0012"]) == 1
+    k13 = df[df["customer_id"] == "0013"]["kwh"].tolist()
+    assert np.isnan(k13[0]) and k13[1] == 0.0
+    r15 = df[df["customer_id"] == "0015"]
+    assert len(r15) == 1 and r15["ts_epoch"].iloc[0] == 1704067200 and r15["kwh"].iloc[0] == pytest.approx(0.2)
+    assert df["ts_epoch"].dtype == "int64" and df["kwh"].equals(df["energy_consumption_kwh"])
+
+
+@pytest.mark.parametrize("sep,dec,bom", [(";", ",", False), (",", ".", True), ("\t", ".", False)])
+def test_load_test_separators(tmp_path, sep, dec, bom):
+    header = HEADER.replace(";", sep)
+    body = f"0012{sep}0{dec}5{sep}2024-01-01 01:00:00{sep}1704067200\n"
+    df, ids = load_test(_test_csv(tmp_path, body, header=header, bom=bom), verbose=False)
+    assert ids == ["0012"] and df["kwh"].iloc[0] == pytest.approx(0.5)
+
+
+def test_load_test_mixed_header_separator_and_empty(tmp_path):
+    header = HEADER.replace(";", ",")                       # intestazione con , e dati con ;
+    df, ids = load_test(_test_csv(tmp_path, "0012;0,5;x;1704067200\n", header=header), verbose=False)
+    assert ids == ["0012"] and len(df) == 1
+    df, ids = load_test(_test_csv(tmp_path, "", name="vuoto.csv"), verbose=False)
+    assert ids == [] and df.empty
+
+
+def test_inference_on_dirty_csv(tmp_path, monkeypatch):
+    import inference
+    src = _test_csv(tmp_path, DIRTY)
+    monkeypatch.chdir(tmp_path)
+    assert inference.main([str(src)]) == 0
+    out = (tmp_path / "predictions.csv").read_text(encoding="utf-8").splitlines()
+    assert out[0] == "customer_id;pv_installed;pv_installation_date;pv_capacity_kwp"
+    assert [ln.split(";")[0] for ln in out[1:]] == ["0012", "0013", "0014", "0015", "0016"]
+    for ln in out[1:]:
+        cid, pv, date, kwp = ln.split(";")
+        assert pv in ("TRUE", "FALSE") and (pv == "FALSE" or (len(date) == 10 and float(kwp) > 0))
+    assert (tmp_path / "pv_extensions_predictions.csv").read_text().startswith("customer_id;extension_date")
+
+
+def test_inference_safety_net(tmp_path, monkeypatch):
+    import inference
+    src = _test_csv(tmp_path, DIRTY)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(inference, "read_test", lambda p: (_ for _ in ()).throw(RuntimeError("rotto")))
+    assert inference.main([str(src)]) == 0
+    out = (tmp_path / "predictions.csv").read_text(encoding="utf-8").splitlines()
+    assert [ln.split(";")[:2] for ln in out[1:]] == [[c, "TRUE"] for c in ["0012", "0013", "0014", "0015", "0016"]]
+    assert (tmp_path / "pv_extensions_predictions.csv").read_text().strip() == \
+        "customer_id;extension_date;pv_capacity_after_extension_kwp"
