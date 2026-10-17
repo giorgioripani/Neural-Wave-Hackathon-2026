@@ -106,13 +106,13 @@ def test_diag_reasons_and_threshold():
 
 def test_why_no_window():
     from src.models.run_ext_dev import why_no_window
-    lab, pos, ser, ana = {"POD1", "POD2", "POD3"}, {"POD1", "POD2"}, {"POD1"}, {"POD1"}
-    assert why_no_window("POD1", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "ok"
-    assert why_no_window("POD1", pd.NaT, lab, pos, ser, ana) == "data_non_letta"
-    assert why_no_window("pod1 ", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "id_diverso_simile"
-    assert why_no_window("POD9", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "id_assente_da_pv_labels"
+    lab, pos, ser, ana = {"SYNTH_ALPHA", "SYNTH_BETA", "POD3"}, {"SYNTH_ALPHA", "SYNTH_BETA"}, {"SYNTH_ALPHA"}, {"SYNTH_ALPHA"}
+    assert why_no_window("SYNTH_ALPHA", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "ok"
+    assert why_no_window("SYNTH_ALPHA", pd.NaT, lab, pos, ser, ana) == "data_non_letta"
+    assert why_no_window("synth_alpha ", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "id_diverso_simile"
+    assert why_no_window("SYNTH_GAMMA", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "id_assente_da_pv_labels"
     assert why_no_window("POD3", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "cliente_con_pv_false"
-    assert why_no_window("POD2", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "cliente_assente_dalla_serie"
+    assert why_no_window("SYNTH_BETA", pd.Timestamp("2024-01-01"), lab, pos, ser, ana) == "cliente_assente_dalla_serie"
 
 
 def test_run_ext_dev_main_on_synthetic(tmp_path, monkeypatch, capsys):

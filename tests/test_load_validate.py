@@ -38,8 +38,8 @@ def test_load_series_rules(tmp_path):
 
 
 def test_load_series_dot_decimal_and_filter(tmp_path):
-    p = write(tmp_path, "POD1;0.25;x;1704067200\nPOD2;0.5;x;1704067200\n")
-    assert load_series(p, customers=["POD2"])["customer_id"].tolist() == ["POD2"]
+    p = write(tmp_path, "SYNTH_ALPHA;0.25;x;1704067200\nSYNTH_BETA;0.5;x;1704067200\n")
+    assert load_series(p, customers=["SYNTH_BETA"])["customer_id"].tolist() == ["SYNTH_BETA"]
     assert load_series(p)["kwh"].tolist() == [0.25, 0.5]
 
 
