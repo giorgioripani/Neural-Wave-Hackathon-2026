@@ -13,7 +13,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | Andrea | Dati e punteggio ufficiale; report di 3 pagine | `src/loading/`, `src/eval/` | `andrea/eval` (in main) | Fatto: prepare_data, load_series, daily_features, score.py, validate.py. Prossimo: punteggio della pipeline intera, grafici e tabelle per il report |
 | Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | [branch] | [stato] |
 | Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | `Leonardo/data1` | Task 2 v2 + fix fillna in main. Prossimo: test sintetico realistico |
-| Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | `francesco/capacity` | PR verso main aperta da Francesco; in uso `geo_b` (media geometrica B lineare x mediana): P 0,437 con data vera e con data stimata da date.py, mediana 0,415 (validate.py, seed 42; con seed 7 0,429). `geo_b_loglog`, taglia e altre combinazioni scartate |
+| Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | `francesco/capacity` | branch pronto per la PR verso main; in uso `geo_b` (media geometrica B lineare x mediana): P 0,437 con data vera e con data stimata da date.py, mediana 0,415 (validate.py, seed 42; con seed 7 0,429). `geo_b_loglog`, taglia e altre combinazioni scartate |
 
 ## Traguardi
 - [x] Ven sera: dati puliti in Parquet, punteggio ufficiale pronto, `inference.py` provvisorio
