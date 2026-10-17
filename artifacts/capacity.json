@@ -1,0 +1,11 @@
+{
+  "method": "median",
+  "fallback_kwp": 169.5,
+  "trained_as": "median",
+  "validation_P": {
+    "median": 0.4149,
+    "b": 0.4124,
+    "b_ratio": 0.212,
+    "a": 0.3783
+  }
+}
