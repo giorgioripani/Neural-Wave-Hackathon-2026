@@ -11,6 +11,7 @@ di riserva. Niente rete, niente data/: gli artefatti stanno in artifacts/.
 """
 import csv
 import importlib
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -25,9 +26,20 @@ PRED_HEADER = ["customer_id", "pv_installed", "pv_installation_date", "pv_capaci
 EXT_HEADER = ["customer_id", "extension_date", "pv_capacity_after_extension_kwp"]
 SEP = ";"
 PV_THRESHOLD = 0.5
-# Se detect dice TRUE ma capacity fallisce, un kWp vuoto vale 0 punti: meglio un valore tipico.
-# TODO(Francesco): sostituire con la mediana dei kWp delle etichette di sviluppo.
-DEFAULT_KWP = 5.0
+FALLBACK_MEDIAN_KWP = 169.5  # mediana dei kWp di sviluppo, se manca l'artefatto
+
+
+def default_kwp() -> float:
+    """Mediana dei kWp di sviluppo salvata da train_capacity in artifacts/capacity.json."""
+    try:
+        kwp = float(json.loads((ARTIFACTS / "capacity.json").read_text(encoding="utf-8"))["median"])
+        return kwp if kwp > 0 else FALLBACK_MEDIAN_KWP
+    except Exception:
+        return FALLBACK_MEDIAN_KWP
+
+
+# Se detect dice TRUE ma capacity fallisce, un kWp vuoto vale 0 punti: si usa la mediana.
+DEFAULT_KWP = default_kwp()
 
 
 def sniff_sep(path: Path) -> str:
