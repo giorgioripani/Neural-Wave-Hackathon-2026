@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from src.models.extensions import EXT_THRESHOLD
-from src.viz.style import DOUBLE, GREY, OKABE_ITO, num, save
+from src.viz.style import DOUBLE, GREY, OKABE_ITO, dec, num, save
 
 
 def make(summary_path, diag_path, fig_dir, fmt="pdf") -> list:
@@ -16,7 +16,7 @@ def make(summary_path, diag_path, fig_dir, fmt="pdf") -> list:
     r_cols = [c for c in sm.columns if c.startswith("recall_r")]
     shades = (OKABE_ITO["sky"], OKABE_ITO["blue"], OKABE_ITO["purple"], OKABE_ITO["green"])
     for c, color in zip(r_cols, shades):
-        a1.plot(sm["threshold"], sm[c], marker="o", color=color, lw=0.9, label=f"recall, r = {c[8:]}")
+        a1.plot(sm["threshold"], sm[c], marker="o", color=color, lw=0.9, label=f"recall, r = {dec(c[8:])}")
     a1.plot(sm["threshold"], sm["recall"], marker="o", color="black", label="recall, tutte")
     a1.plot(sm["threshold"], sm["fa_per_customer"], marker="s", ls="--", color=OKABE_ITO["vermillion"],
             label="falsi allarmi / cliente")

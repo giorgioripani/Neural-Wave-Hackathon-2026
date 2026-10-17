@@ -143,3 +143,45 @@ def test_make_all(data, tmp_path, capsys):
     assert len(lines) == 10 and all(Path(x).is_file() for x in lines)  # 8 figure + 2 tabelle
     with pytest.raises(SystemExit, match="run_detect.py"):
         make_all.main(args[:6] + ["--artifacts", str(tmp_path / "vuoto"), "--only", "2"])
+
+
+def test_decimal_default_and_helpers(monkeypatch):
+    from src.viz import style
+    assert style.DECIMAL == "."
+    assert style.num(0.4371) == "0.437" and style.dec("r = 0.3") == "r = 0.3"
+    monkeypatch.setattr(style, "DECIMAL", ",")
+    assert style.num(0.4371) == "0,437" and style.num(12.0, 1) == "12,0"
+    assert style.dec("r = 0.3") == "r = 0,3" and style.dec("$0.5$") == "$0{,}5$"
+
+
+@pytest.mark.parametrize("sep", [".", ","])
+def test_tick_labels_use_decimal(monkeypatch, tmp_path, sep):
+    import matplotlib.pyplot as plt
+    from src.viz import style
+    monkeypatch.setattr(style, "DECIMAL", sep)
+    fig, (a1, a2) = plt.subplots(1, 2)
+    a1.plot([0, 1], [0, 0.5])
+    a2.plot([1, 100], [1, 100]); a2.set_yscale("log")
+    style.apply_decimal(fig)
+    style.apply_decimal(fig)  # due volte: non si avvolge due volte
+    fig.canvas.draw()
+    labels = [t.get_text() for t in a1.get_yticklabels() if t.get_text()]
+    assert any(f"0{sep}1" in t for t in labels)
+    other = "," if sep == "." else "."
+    assert not any(f"0{other}1" in t for t in labels)
+    assert not isinstance(a1.yaxis.get_major_formatter().inner, style.DecimalFormatter)
+    _ok([style.save(fig, "dec", tmp_path, "png")])
+
+
+@pytest.mark.parametrize("sep", [".", ","])
+def test_tables_use_decimal(data, monkeypatch, tmp_path, sep):
+    import re
+    from src.viz import style
+    monkeypatch.setattr(style, "DECIMAL", sep)
+    out = data["out"]
+    finals = {p: out / f"date_dev_final_{p}.csv" for p in ("windows", "last730", "full")}
+    tex = Path(fig_date.make_table(finals, tmp_path)[0]).read_text()
+    tex += Path(fig_capacity.make_table(sorted(out.glob("capacity_validate_*_*.csv")), tmp_path, "geo_b")[0]).read_text()
+    other = "," if sep == "." else "."
+    assert re.search(rf"\d{re.escape(sep)}\d", tex)
+    assert not re.search(rf"\d{re.escape(other)}\d", tex)
