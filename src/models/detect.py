@@ -200,8 +200,13 @@ def apply_recent(proba: pd.Series, x: pd.Series, sign: int, threshold: float, sc
 
 def predict(df: pd.DataFrame) -> dict[str, float]:
     """Return {customer_id: probability of PV} with exactly one entry per customer."""
+    proba = proba_from_features(customer_features(df))
+    return {str(k): float(v) for k, v in proba.items()}
+
+
+def proba_from_features(feat: pd.DataFrame) -> pd.Series:
+    """Output of customer_features() -> probability of PV per customer (the saved rule)."""
     p = load_params()
-    feat = customer_features(df)
     proba = proba_from_feature(feat[p["feature"]], p["sign"], p["threshold"], p["scale"])
     tb = p.get("tiebreak")
     if tb and tb["band"] > 0:
@@ -211,4 +216,4 @@ def predict(df: pd.DataFrame) -> dict[str, float]:
     if rc:
         proba = apply_recent(proba, feat[rc["feature"]], rc["sign"], rc["threshold"], rc["scale"])
     proba[proba.index.isin(feat.attrs.get("failed", []))] = np.nan  # crash -> no probability (fallback TRUE)
-    return {str(k): float(v) for k, v in proba.items()}
+    return proba

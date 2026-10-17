@@ -130,6 +130,22 @@ def test_predict_same_on_4_years_and_last_2_years():
     assert detect.predict(series) == detect.predict(series[series["timestamp_epoch"] >= cut])
 
 
+def test_otsu_cut_between_two_groups():
+    from src.models.unlabelled_detect import otsu_cut
+    rng = np.random.default_rng(42)
+    x = np.concatenate([rng.normal(-1, 0.1, 300), rng.normal(1, 0.1, 200), [np.nan]])
+    assert -0.7 < otsu_cut(x) < 0.7
+
+
+def test_features_table_matches_predict():
+    from src.models.unlabelled_detect import features_table
+    series, lab = make_synthetic(n_customers=3, days=500)
+    tab = features_table(series)
+    assert sorted(tab.index) == sorted(lab["customer_id"])
+    assert tab["proba"].to_dict() == detect.predict(series)
+    assert (tab["years"] > 1.3).all()
+
+
 def test_features_have_all_keys():
     f = detect.features_from_daily(_daily())
     assert list(f) == detect.FEATURES
