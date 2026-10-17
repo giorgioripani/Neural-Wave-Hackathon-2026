@@ -12,7 +12,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | Giorgio | Integrazione, `inference.py`, repo dell'organizzazione, Swisstransfer | `inference.py`, `demo/` | [branch] | [stato] |
 | Andrea | Dati e punteggio ufficiale; report di 3 pagine | `src/loading/`, `src/eval/` | [branch] | [stato] |
 | Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | [branch] | [stato] |
-| Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | `Leonardo/data1` | v2 in main; prossimo: fillna |
+| Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | `Leonardo/data1` | “Task 2 v2 + fix fillna in main; Prossimo: test sintetico realistico”
 | Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | [branch] | [stato] |
 
 ## Traguardi
