@@ -56,7 +56,8 @@ def load_series(path, customers=None) -> pd.DataFrame:
     DataFrame customer_id (str), ts_epoch (int64), kwh (float), ts_local (str).
     customers: lista facoltativa di customer_id da leggere (utile sul file grande)."""
     path = Path(path)
-    con = duckdb.connect(config={"enable_progress_bar": False})
+    con = duckdb.connect()
+    con.execute("SET enable_progress_bar = false")
     if path.suffix.lower() == ".parquet":
         rel = con.sql(f"SELECT * FROM read_parquet({_q(str(path))})")
     else:
