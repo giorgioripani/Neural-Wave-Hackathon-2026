@@ -12,7 +12,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | Giorgio | Integrazione, `inference.py`, repo dell'organizzazione, Swisstransfer | `inference.py`, `demo/` | [branch] | [stato] |
 | Andrea | Dati e punteggio ufficiale; report di 3 pagine | `src/loading/`, `src/eval/` | [branch] | [stato] |
 | Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | [branch] | [stato] |
-| Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | [branch] | [stato] |
+| Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | `Leonardo/data1` | v2 in main; prossimo: fillna |
 | Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | [branch] | [stato] |
 
 ## Traguardi
@@ -26,9 +26,10 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 
 ## Fatto (già in main)
 - [data ora] [nome]: [cosa, in una riga]
-
+- 17/10 02:20 Leonardo: Task 2 v2 (stagionalità + gradino, regola "nessun gradino") in main; su 22 clienti, finestre di 2 anni: D 0,58 (circa ±0,17), mediana errore 4 giorni.
 ## In corso
 - [nome]: [cosa, quando pensa di finire]
+- 17/10 02:20 Leonardo: Task 2 v2 (stagionalità + gradino, regola "nessun gradino") in main; su 22 clienti, finestre di 2 anni: D 0,58 (circa ±0,17), mediana errore 4 giorni.
 
 ## Bloccato o serve da altri
 - [nome] aspetta [cosa] da [nome]
