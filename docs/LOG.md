@@ -29,6 +29,39 @@ Tolto fillna(0.0): NaN lasciati, media sugli intervalli presenti, EPS diviso per
 - 2026-10-17 Andrea (agente): un solo file di punteggio: tolto `src/eval/score_date.py` (era solo un rimando), `run_date_dev.py` e `test_date.py` importano da `src/eval/score.py`. Tolto `prova.txt`. Verifica di main dopo i merge: nessun conflitto, 39 test passano, `inference.py` sul test finto (40 clienti, 2 anni) scrive 40 righe nel formato giusto; punteggio 0 finché mancano detect e capacity.
 - 2026-10-17 Andrea (agente, con il consenso di Leonardo): `run_date_dev.py` ora misura di default il metodo della pipeline (v2), legge con `load_series` e tiene le finestre di 730 giorni DENTRO i dati (stessa regola di `validate.py`; prima una finestra poteva uscire dai dati e restare di pochi mesi). Nuovi numeri sui 22 clienti: v1 D 0,523 (mediana 6,5 gg, 9 oltre 30 gg); v2 D 0,597 (mediana 2,5 gg, 7 oltre 30 gg); v3 D 0,570 (mediana 4,5 gg, 6 oltre 30 gg). Classifica invariata, v2 resta il metodo scelto.
 
+Le estensioni sono pronte sul branch lodoscatenato. In inference.py, per ogni cliente segnato TRUE, chiama extensions.predict_extensions(serie_cliente, data_iniziale, kwp_iniziale) dentro un try/except (in caso di errore: nessuna estensione). Raccogli le righe di tutti i clienti con il loro customer_id, applica extensions.top_k(righe, k=3) e scrivile in pv_extensions_predictions.csv (date AAAA-MM-GG, kWp con il punto decimale). Se non ci sono righe, resta la sola intestazione. Il bonus non può togliere punti al punteggio principale. Valutazione con iniezione sintetica, in modo realistico: F1_ext atteso circa 0,29 (circa 2,5 punti). Dettagli in docs/LOG.md.
+
+(.venv) lodo@lodo-XPS-13-9370:~/Desktop/AI-uto-$ git add src/models/date.py src/models/run_date_dev.py src/models/inject_ext_dev.py tests/
+git commit -m "Data v4 (due gradini): D 0,628 vs 0,597 sui 22 clienti"
+git push
+
+python src/models/inject_ext_dev.py --reestimate-date0 --date-method v2
+python src/models/inject_ext_dev.py --reestimate-date0 --date-method v4
+[lodoscatenato f24706a] Data v4 (due gradini): D 0,628 vs 0,597 sui 22 clienti
+ 5 files changed, 164 insertions(+), 21 deletions(-)
+Enumerating objects: 19, done.
+Counting objects: 100% (19/19), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (10/10), done.
+Writing objects: 100% (10/10), 3.96 KiB | 3.96 MiB/s, done.
+Total 10 (delta 9), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (9/9), completed with 9 local objects.
+To https://github.com/giorgioripani/AI-uto-.git
+   77c4e76..f24706a  lodoscatenato -> lodoscatenato
+Clienti usati: 19, saltati: 2 (pochi_mesi 2)
+date0 ristimato (v2) entro 30 gg dalla data iniettata: 27/114 (r0.3=5/38 r0.6=9/38 r1.0=13/38)
+soglia 0.050: recall 0.17 (r0.3=0.11 r0.6=0.13 r1.0=0.26), err gg 2, err kWp 42%, FA/cliente 0.00, F1_ext 0.29
+soglia 0.075: recall 0.11 (r0.3=0.08 r0.6=0.11 r1.0=0.13), err gg 2, err kWp 53%, FA/cliente 0.00, F1_ext 0.19
+soglia 0.100: recall 0.07 (r0.3=0.00 r0.6=0.08 r1.0=0.13), err gg 1, err kWp 41%, FA/cliente 0.00, F1_ext 0.13
+soglia 0.150: recall 0.04 (r0.3=0.00 r0.6=0.05 r1.0=0.05), err gg 1, err kWp 53%, FA/cliente 0.00, F1_ext 0.07
+Clienti usati: 19, saltati: 2 (pochi_mesi 2)
+date0 ristimato (v4) entro 30 gg dalla data iniettata: 27/114 (r0.3=5/38 r0.6=9/38 r1.0=13/38)
+soglia 0.050: recall 0.19 (r0.3=0.11 r0.6=0.18 r1.0=0.29), err gg 2, err kWp 66%, FA/cliente 0.00, F1_ext 0.32
+soglia 0.075: recall 0.14 (r0.3=0.08 r0.6=0.16 r1.0=0.18), err gg 2, err kWp 67%, FA/cliente 0.00, F1_ext 0.25
+soglia 0.100: recall 0.11 (r0.3=0.00 r0.6=0.13 r1.0=0.18), err gg 1, err kWp 56%, FA/cliente 0.00, F1_ext 0.19
+soglia 0.150: recall 0.07 (r0.3=0.00 r0.6=0.11 r1.0=0.11), err gg 1, err kWp 67%, FA/cliente 0.00, F1_ext 0.13
+
+Diagnosi della data rubata dall’estensione: 26 casi su 27 hanno l’installazione vera prima della finestra (o nei primi 60 giorni). In quei casi nella finestra si vede un solo gradino e il metodo lo prende per l’installazione. Soluzione individuata: decidere se prima del gradino c’è già fotovoltaico con il rilevatore del Task 1.
 
 FEATURES PER CAPIRE LA PRESENZA DI UN PV - FLAVIO
 #	What we tried	F1	TP	FP	FN	Verdict
@@ -56,3 +89,32 @@ FEATURES PER CAPIRE LA PRESENZA DI UN PV - FLAVIO
 21	Second pass rec_drop (dip one year earlier minus dip in last 90 days), only on customers dip_spread calls no-PV	0.952	20	0	2	Kept: finds the 178 kWp plant installed 75 days before data end; stage-2 threshold stable 0.12-0.14 in LOO; no-PV max 0.05 vs threshold 0.12
 22	Size normalisation: dip_spread divided by morning/afternoon spread (spread_norm); kWh dip spread / median shoulder kWh (spread_kwh)	0.878 / 0.696	18 / 16	1 / 8	4 / 6	Rejected: worse than dip_spread (log ratio is already size-free)
 23	Agent (Claude Code, 2026-10-17): tested features 21-22 on per-window aggregates; checked new vs committed predict() end to end (0.927 -> 0.952)
+
+
+Data v4 (due gradini, il primo come installazione): sui 22 clienti D 0,628 contro 0,597 della v2 (1 cliente migliorato, 0 peggiorati); nell’iniezione realistica la data rubata dall’estensione resta 27/114 come con la v2, la recall delle estensioni passa da 0,17 a 0,19 e l’errore kWp da 42% a 66%. Non adottata: il secondo criterio di accettazione, fissato prima, non è soddisfatto e il guadagno di D si basa su un solo cliente.
+Diagnosi della data rubata dall’estensione: 26 casi su 27 hanno l’installazione vera prima della finestra (o nei primi 60 giorni). Nella finestra si vede un solo gradino e il metodo lo prende per l’installazione. Soluzione individuata: decidere con il rilevatore del Task 1 se prima del gradino c’è già fotovoltaico.
+
+refine_date0 (detect sul tratto prima del gradino) per la data principale: D 0,556 contro 0,597 della v2 (3 clienti peggiorati) → respinto. Per le estensioni: data rubata 27→6 su 114, recall 0,17→0,33, F1_ext atteso 0,29→0,50 → da usare solo nella ricerca delle estensioni, se i falsi allarmi sui clienti reali restano bassi.
+
+Ho fatto le tre modifiche, e in inject_ext_dev.py ho corretto il problema che mi hai chiesto di verificare. pytest passa (155 test), e come chiesto non ho eseguito nulla sui dati veri.
+
+Verifica di inject_ext_dev.py: le serie originali, quelle dei falsi allarmi, non passavano da refine_date0. Ora ci passano. La stampa riporta i motivi separati: "Motivi refine: iniezioni …; originali …".
+
+Cambio di comportamento da confermare: ho allineato --refine di inject_ext_dev.py a predict_extensions_refined. La data corretta serve solo come inizio della ricerca delle estensioni; date0 e kwp0 restano quelli senza refine.
+
+Prima, con --refine, la data corretta sostituiva date0 sulle serie iniettate.
+Ora le righe "entro 30 gg" e "data vera prima/dopo" usano la data ristimata senza refine. L'inizio della ricerca va nella colonna date0_ext.
+Le date da iniettare si scelgono sempre dal date0 senza refine, quindi le iniezioni restano le stesse con e senza l'opzione.
+src/models/run_ext_dev.py --refine: date0 viene da date.estimate e kwp0 da capacity.estimate(serie, date0). Poi date0_ext, motivo = refine_date0(serie, date0), e le estensioni si cercano da date0_ext. I falsi allarmi si stampano come prima; il conteggio dei motivi è sulla riga "Clienti analizzati", per restare entro 10 righe. Il CSV ha in più date0_ext e refine_reason.
+
+predict_extensions_refined(series, date0, kwp0) in src/models/extensions.py: applica refine_date0, poi predict_extensions partendo dalla data corretta, e restituisce solo la lista delle estensioni. date0 e kwp0 non vengono toccati.
+
+Correzione necessaria in _kwp_ratio: se l'inizio della ricerca è il primo giorno (caso "pv_gia_presente"), il gradino dell'installazione è una colonna tutta a 1, identica alla costante, e s1 non è stimabile. Ora la funzione lo riconosce e kwp_after prende il valore di riserva, 1,1 × kwp0. Senza questo controllo il risultato sarebbe stato un numero arbitrario.
+
+Test nuovi in tests/test_refine.py, su una serie con fotovoltaico già presente dall'inizio ed estensione al giorno 400:
+
+Senza refine non si trova nulla; con detect finto a 0,9 si trova l'estensione, con kWp 4,4; con detect a 0,1 il risultato è uguale a predict_extensions.
+run_ext_dev.main() con e senza --refine: con l'opzione si trova l'estensione, i falsi allarmi sono 0 e la stampa resta entro 10 righe.
+In inject_ext_dev.py le serie originali passano dal refine e date0 non cambia.
+_kwp_ratio: s1 non stimabile con l'installazione al primo giorno; rapporto circa 1,5 con l'installazione visibile.
+Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova ma i suoi kWp sono sempre 1,1 × kwp0. In più kwp0 è stato stimato su date0, che in quel caso è il gradino dell'estensione, quindi probabilmente misura l'estensione e non l'impianto iniziale.

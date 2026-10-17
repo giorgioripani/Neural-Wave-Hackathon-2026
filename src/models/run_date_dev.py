@@ -11,9 +11,13 @@ WINDOW_DAYS si usa tutta la serie. Nessun parametro scelto sui risultati.
 
 Uso (dalla radice del repo):
     python src/models/run_date_dev.py [--series data/clean/dev.parquet]
-        [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3]
+        [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3|v4] [--refine]
 
 --method di default: v2, il metodo usato da inference.py (date.estimate).
+v1, v2, v3 si confrontano fra loro; v4 (v2 + secondo gradino) solo con v2.
+--refine: dopo il metodo scelto si applica extensions.refine_date0 sulla serie
+della finestra (solo al metodo scelto); si confronta anche con lo stesso metodo
+senza refine ("raw") e si stampa il conteggio dei motivi.
 Salva outputs/date_dev_<metodo>.csv, con colonne di confronto *_<altro metodo>.
 Stampa solo: clienti, D medio, mediana dell'errore in giorni, clienti con
 errore > 30 giorni (errore del cliente = mediana sulle sue finestre) e, per ogni
@@ -31,20 +35,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.eval.score import date_score, load_labels  # noqa: E402
 from src.eval.validate import window  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
-from src.models.date import daily_midday_ratio, estimate, estimate_v1, estimate_v2, estimate_v3  # noqa: E402
+from src.models.extensions import refine_date0  # noqa: E402
+from src.models.date import (daily_midday_ratio, estimate, estimate_v1, estimate_v2,  # noqa: E402
+                             estimate_v3, estimate_v4)
 
 SEED = 42
 WINDOW_DAYS = 730
 POSITIONS = (0.25, 0.50, 0.75)
-METHODS = {"v1": estimate_v1, "v2": estimate_v2, "v3": estimate_v3}
+METHODS = {"v1": estimate_v1, "v2": estimate_v2, "v3": estimate_v3, "v4": estimate_v4}
 DEFAULT_METHOD = next(m for m, f in METHODS.items() if f is estimate)
 # metodi ricalcolati nella stessa esecuzione per il confronto per cliente
-COMPARE = {m: [o for o in METHODS if o != m] for m in METHODS}
+_BASE = ("v1", "v2", "v3")
+COMPARE = {**{m: [o for o in _BASE if o != m] for m in _BASE}, "v4": ["v2"]}
 
 
-def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, method=estimate, days: int = WINDOW_DAYS) -> list:
+def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, method=estimate, days: int = WINDOW_DAYS,
+                      series: pd.DataFrame | None = None) -> list:
     """Una riga di risultato per finestra. daily: colonne date, midday_ratio.
-    method: funzione daily -> 'AAAA-MM-GG' (estimate_v1, estimate_v2 o estimate_v3)."""
+    method: funzione daily -> 'AAAA-MM-GG' (estimate_v1 ... estimate_v4).
+    series: serie a 15 minuti del cliente; se data, refine_date0 sul tratto della
+    finestra corregge la data e il motivo va in refine_reason."""
     dates = pd.to_datetime(daily["date"])
     t = pd.Timestamp(true_date).normalize()
     first, end = dates.min(), dates.max() + pd.Timedelta(days=1)
@@ -59,6 +69,9 @@ def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, metho
                "true_date": t.date(), "pred_date": "", "err_days": np.nan, "score": 0.0}
         if len(w) > 0:
             pred = method(w)
+            if series is not None:
+                ts = pd.to_datetime(series["ts_epoch"], unit="s")
+                pred, row["refine_reason"] = refine_date0(series[(ts >= start) & (ts < stop)], pred)
             row.update(pred_date=pred, err_days=(pd.Timestamp(pred) - t).days, score=date_score(pred, t))
         rows.append(row)
     return rows
@@ -70,10 +83,11 @@ def main() -> int:
     ap.add_argument("--labels", default="data/pv_labels_dev.csv")
     ap.add_argument("--out", default=None, help="default outputs/date_dev_<metodo>.csv")
     ap.add_argument("--method", choices=sorted(METHODS), default=DEFAULT_METHOD)
+    ap.add_argument("--refine", action="store_true", help="applica refine_date0 dopo il metodo")
     a = ap.parse_args()
     np.random.seed(SEED)
-    out = a.out or f"outputs/date_dev_{a.method}.csv"
-    methods = [a.method] + COMPARE[a.method]
+    out = a.out or f"outputs/date_dev_{a.method}{'_refine' if a.refine else ''}.csv"
+    others = COMPARE[a.method] + (["raw"] if a.refine else [])
 
     lab = load_labels(a.labels)
     pos_lab = lab[lab["pv_installed"] & lab["pv_installation_date"].notna()]
@@ -86,10 +100,14 @@ def main() -> int:
             rows.append({"customer_id": cid, "true_date": true_date.date(), "n_days": 0, "score": 0.0})
             continue
         daily = daily_midday_ratio(groups[cid])
-        res_m = {m: evaluate_customer(daily, true_date, method=METHODS[m]) for m in methods}
+        res_m = {m: evaluate_customer(daily, true_date, method=METHODS[m]) for m in COMPARE[a.method]}
+        res_m[a.method] = evaluate_customer(daily, true_date, method=METHODS[a.method],
+                                            series=groups[cid] if a.refine else None)
+        if a.refine:
+            res_m["raw"] = evaluate_customer(daily, true_date, method=METHODS[a.method])
         for i, r in enumerate(res_m[a.method]):
             extra = {}
-            for m in COMPARE[a.method]:
+            for m in others:
                 o = res_m[m][i]
                 extra.update({f"pred_date_{m}": o["pred_date"], f"err_days_{m}": o["err_days"], f"score_{m}": o["score"]})
             rows.append({"customer_id": cid, **r, **extra})
@@ -99,12 +117,15 @@ def main() -> int:
     res.to_csv(out, index=False)
 
     per_cust = res.groupby("customer_id").agg(score=("score", "mean"), abs_err=("err_days", lambda e: e.abs().median()))
-    print(f"Metodo:                  {a.method}")
+    print(f"Metodo:                  {a.method}{' + refine' if a.refine else ''}")
     print(f"Clienti:                 {len(per_cust)}")
     print(f"D medio:                 {res['score'].mean():.3f}")
     print(f"Mediana errore (giorni): {res['err_days'].abs().median():.1f}")
     print(f"Clienti errore > 30 gg:  {int((per_cust['abs_err'].isna() | (per_cust['abs_err'] > 30)).sum())}")
-    for m in COMPARE[a.method]:
+    if a.refine:
+        counts = res["refine_reason"].value_counts() if "refine_reason" in res else pd.Series(dtype=int)
+        print("Motivi refine (finestre): " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    for m in others:
         # migliorato/peggiorato = D medio del cliente sulle sue finestre, metodo scelto contro m
         col = f"score_{m}"
         diff = res.assign(**{col: res[col].fillna(0.0)}).groupby("customer_id").apply(

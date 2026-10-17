@@ -86,23 +86,34 @@ MIN_SSE_GAIN = 0.05  # il gradino deve ridurre l'errore quadratico di almeno il 
 YEAR_DAYS = 365.25
 
 
-def _step_regression(daily: pd.DataFrame, seasonal_step: bool) -> str:
-    """Nucleo comune di estimate_v2 e estimate_v3 (vedi le loro docstring)."""
+def _prepare(daily: pd.DataFrame):
+    """Giorni validi ordinati, log del rapporto tagliato ai quantili 1%-99% e base
+    stagionale (costante, sin, cos). -> (d, y, base); y e base sono None se la serie
+    e` troppo corta per un gradino."""
     d = daily[["date", "midday_ratio"]].copy()
     d["date"] = pd.to_datetime(d["date"])
     d = d.replace([np.inf, -np.inf], np.nan).dropna().sort_values("date").reset_index(drop=True)
     if d.empty:
         raise ValueError("estimate: nessun giorno valido")
-    first = d["date"].iloc[0].strftime("%Y-%m-%d")
     n = len(d)
     if n < 2 * MIN_SEGMENT_DAYS + 1:
-        return first
+        return d, None, None
     y = np.log(d["midday_ratio"].clip(lower=EPS_KWH).to_numpy())
     lo, hi = np.quantile(y, [0.01, 0.99])
     y = np.clip(y, lo, hi)
     t = (d["date"] - d["date"].iloc[0]).dt.days.to_numpy()
     w = 2 * np.pi * t / YEAR_DAYS
     base = np.column_stack([np.ones(n), np.sin(w), np.cos(w)])
+    return d, y, base
+
+
+def _step_regression(daily: pd.DataFrame, seasonal_step: bool) -> str:
+    """Nucleo comune di estimate_v2 e estimate_v3 (vedi le loro docstring)."""
+    d, y, base = _prepare(daily)
+    first = d["date"].iloc[0].strftime("%Y-%m-%d")
+    n = len(d)
+    if y is None:
+        return first
 
     def sse(X):
         beta = np.linalg.lstsq(X, y, rcond=None)[0]
@@ -144,6 +155,54 @@ def estimate_v3(daily: pd.DataFrame) -> str:
     forte in estate che in inverno). Stessa regola del 5% e stessi bordi di v2.
     """
     return _step_regression(daily, seasonal_step=True)
+
+
+MIN_STEP_GAP_DAYS = 90  # v4: i due gradini distano almeno 90 giorni
+
+
+def estimate_v4(daily: pd.DataFrame) -> str:
+    """v2 piu` un secondo gradino, per non scambiare un'estensione per l'installazione.
+
+    (1) t1 = gradino della v2 (stessa regola del 5%: senza gradino ritorna il primo
+    giorno). (2) Secondo gradino k2, prima o dopo t1: regressione congiunta
+    log(midday_ratio) ~ costante + sin/cos + gradino(t1) + gradino(k2), con k2 ad
+    almeno MIN_SEGMENT_DAYS giorni dai bordi e ad almeno MIN_STEP_GAP_DAYS giorni
+    (di calendario) da t1; si tiene il k2 con l'errore minimo. (3) Se il modello a
+    due gradini riduce l'errore del modello a un gradino di almeno EXT_THRESHOLD
+    (extensions.py) ed entrambi i gradini sono verso il basso, ritorna il PRIMO dei
+    due; altrimenti t1.
+    """
+    from src.models.extensions import EXT_THRESHOLD  # qui: extensions importa date
+
+    t1 = estimate_v2(daily)
+    d, y, base = _prepare(daily)
+    if y is None or t1 == d["date"].iloc[0].strftime("%Y-%m-%d"):
+        return t1  # nessun gradino secondo la v2
+    n = len(d)
+    k1 = int(np.searchsorted(d["date"].to_numpy(), np.datetime64(t1)))
+    step1 = (np.arange(n) >= k1).astype(float)
+
+    def fit(X):
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+        r = y - X @ beta
+        return beta, float(r @ r)
+
+    _, sse1 = fit(np.column_stack([base, step1]))
+    days = (d["date"] - d["date"].iloc[k1]).dt.days.to_numpy()
+    best = None
+    for k2 in range(MIN_SEGMENT_DAYS, n - MIN_SEGMENT_DAYS + 1):
+        if abs(days[k2]) < MIN_STEP_GAP_DAYS:
+            continue
+        step2 = (np.arange(n) >= k2).astype(float)
+        beta, s = fit(np.column_stack([base, step1, step2]))
+        if best is None or s < best[1]:
+            best = (k2, s, beta[3], beta[4])
+    if best is None or sse1 <= 0:
+        return t1
+    k2, sse2, c1, c2 = best
+    if (sse1 - sse2) / sse1 >= EXT_THRESHOLD and c1 < 0 and c2 < 0:
+        return d["date"].iloc[min(k1, k2)].strftime("%Y-%m-%d")
+    return t1
 
 
 # Metodo pubblico di default (interfaccia date.estimate in CLAUDE.md).

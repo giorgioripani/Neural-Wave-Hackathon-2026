@@ -257,3 +257,43 @@ def test_no_gaps_same_as_sum_version_up_to_constant(synth):
     assert len(new) == len(old)
     diff = new - old
     assert np.ptp(diff) < 1e-9
+
+
+def _daily_steps(steps, days=730, seed=42):
+    """SINTETICO: log(midday_ratio) = onda stagionale + gradini (giorno, salto) + rumore."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(days)
+    y = 0.2 * np.cos(2 * np.pi * t / 365.25) + 0.1 * rng.standard_normal(days)
+    for d0, jump in steps:
+        y = y + np.where(t >= d0, jump, 0.0)
+    dates = pd.date_range("2023-01-01", periods=days, freq="D").date
+    return pd.DataFrame({"date": dates, "midday_ratio": np.exp(y)})
+
+
+def _day(d):
+    return (pd.Timestamp("2023-01-01") + pd.Timedelta(days=d)).strftime("%Y-%m-%d")
+
+
+def test_v4_two_steps_returns_first():
+    from src.models.date import estimate_v2, estimate_v4
+    daily = _daily_steps([(200, -0.5), (450, -1.0)])  # il secondo gradino e` il piu` grande
+    assert abs((pd.Timestamp(estimate_v2(daily)) - pd.Timestamp(_day(450))).days) <= 3  # v2 sceglie il grande
+    assert abs((pd.Timestamp(estimate_v4(daily)) - pd.Timestamp(_day(200))).days) <= 3
+
+
+def test_v4_single_step_same_as_v2():
+    from src.models.date import estimate_v2, estimate_v4
+    for daily in (_daily_steps([(300, -0.8)]), _daily_steps([])):
+        assert estimate_v4(daily) == estimate_v2(daily)
+
+
+def test_v4_upward_second_step_returns_t1():
+    from src.models.date import estimate_v2, estimate_v4
+    daily = _daily_steps([(200, -1.0), (450, 0.5)])
+    assert estimate_v4(daily) == estimate_v2(daily)
+
+
+def test_run_date_dev_v4_compares_with_v2_only():
+    from src.models.run_date_dev import COMPARE, DEFAULT_METHOD, METHODS
+    assert DEFAULT_METHOD == "v2" and "v4" in METHODS
+    assert COMPARE["v4"] == ["v2"] and COMPARE["v2"] == ["v1", "v3"]
