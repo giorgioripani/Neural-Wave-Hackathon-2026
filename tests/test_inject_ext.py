@@ -118,6 +118,23 @@ def test_main_on_synthetic(tmp_path, monkeypatch, capsys):
     assert inject_ext_dev.main() == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert lines[0].startswith("Clienti usati: 1, saltati: 0")  # POD0002 escluso: ha un'estensione
-    assert len(lines) == 1 + len(THRESHOLDS) and all("F1_ext" in ln for ln in lines[1:])
+    assert len(lines) == 2 + len(THRESHOLDS) and lines[1].startswith("date0 ristimato (v2)")
+    assert all("F1_ext" in ln for ln in lines[2:])
     for f in ("injections.csv", "originals.csv", "skipped.csv", "summary.csv"):
         assert (tmp_path / "out" / f).exists()
+
+
+def test_reest_near():
+    from src.models.inject_ext_dev import reest_near
+    inj = pd.DataFrame({"customer_id": "A", "inj_date": ["2024-01-01"] * 4 + ["2024-06-01"] * 2,
+                        "r": [0.3, 0.3, 1.0, 1.0, 0.6, 0.6], "threshold": [0.05, 0.1] * 3,
+                        "date0_reest": ["2024-01-20"] * 2 + ["2023-05-01"] * 2 + ["2024-07-15"] * 2})
+    near = reest_near(inj)  # una riga per iniezione, non per soglia
+    assert near["tot"] == (1, 3) and near[0.3] == (1, 1) and near[1.0] == (0, 1) and near[0.6] == (0, 1)
+
+
+def test_date_method_v4_used_for_reestimate():
+    from src.models.date import estimate_v4
+    _, inj, _ = evaluate_customer("POD0001", make_series(), day_ts(INSTALL_DAY), 4.0, np.random.default_rng(42),
+                                  thresholds=(0.05,), reestimate_date0=True, date_fn=estimate_v4)
+    assert all(row["date0"] == row["date0_reest"] for row in inj)

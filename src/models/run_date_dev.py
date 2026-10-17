@@ -11,9 +11,10 @@ WINDOW_DAYS si usa tutta la serie. Nessun parametro scelto sui risultati.
 
 Uso (dalla radice del repo):
     python src/models/run_date_dev.py [--series data/clean/dev.parquet]
-        [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3]
+        [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3|v4]
 
 --method di default: v2, il metodo usato da inference.py (date.estimate).
+v1, v2, v3 si confrontano fra loro; v4 (v2 + secondo gradino) solo con v2.
 Salva outputs/date_dev_<metodo>.csv, con colonne di confronto *_<altro metodo>.
 Stampa solo: clienti, D medio, mediana dell'errore in giorni, clienti con
 errore > 30 giorni (errore del cliente = mediana sulle sue finestre) e, per ogni
@@ -31,15 +32,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.eval.score import date_score, load_labels  # noqa: E402
 from src.eval.validate import window  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
-from src.models.date import daily_midday_ratio, estimate, estimate_v1, estimate_v2, estimate_v3  # noqa: E402
+from src.models.date import (daily_midday_ratio, estimate, estimate_v1, estimate_v2,  # noqa: E402
+                             estimate_v3, estimate_v4)
 
 SEED = 42
 WINDOW_DAYS = 730
 POSITIONS = (0.25, 0.50, 0.75)
-METHODS = {"v1": estimate_v1, "v2": estimate_v2, "v3": estimate_v3}
+METHODS = {"v1": estimate_v1, "v2": estimate_v2, "v3": estimate_v3, "v4": estimate_v4}
 DEFAULT_METHOD = next(m for m, f in METHODS.items() if f is estimate)
 # metodi ricalcolati nella stessa esecuzione per il confronto per cliente
-COMPARE = {m: [o for o in METHODS if o != m] for m in METHODS}
+_BASE = ("v1", "v2", "v3")
+COMPARE = {**{m: [o for o in _BASE if o != m] for m in _BASE}, "v4": ["v2"]}
 
 
 def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, method=estimate, days: int = WINDOW_DAYS) -> list:
