@@ -66,7 +66,7 @@ tests/              test automatici
 ```
 
 ## Metodo e risultati
-[Un paragrafo per compito e una tabella con F1, D, P e punteggio misurato con validazione a un cliente alla volta, su finestre di due anni come nel test. Dettagli nel report.]
+[Un paragrafo per compito e una tabella con F1, D, P e punteggio misurato con validazione a un cliente alla volta, sulla serie intera di ogni cliente come nel test. Il test copre il periodo 2022-2025 come i dati di sviluppo (circa 4 anni per cliente), già filtrato sui POD; nessuna installazione prima del 2022. Dettagli nel report.]
 
 ## Limiti
 [Cosa non funziona o funziona male, onestamente.]

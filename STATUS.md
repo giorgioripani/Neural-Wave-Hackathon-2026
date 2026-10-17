@@ -37,12 +37,12 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 - Flavio: feature per installazioni recenti e dip normalizzato per i grandi impianti commerciali (sab pomeriggio)
 
 ## Bloccato o serve da altri
-- Andrea aspetta `detect.py` da Flavio e `capacity.py` da Francesco in main, per il punteggio dell'intera pipeline (oggi: 0, perche' senza detect tutti i clienti escono FALSE).
-- Tutti: risposta degli organizzatori su impianti installati prima dei 2 anni di dati del test (decide quanto vale D).
+- Nessun blocco aperto. Risolti: detect e capacity sono in main (pipeline intera misurata); gli organizzatori hanno risposto sul formato del test (vedi Decisioni).
 
 ## Decisioni
 - 2026-10-17 Andrea: kWh negativi -> 0 (riga tenuta) in `load_series`; giorni = giorni UTC (ora legale); D e P solo sui veri positivi (piano, pag. 2).
 - 2026-10-17: CSV di uscita con punto e virgola (confermato dagli organizzatori).
+- 2026-10-17 (organizzatori): il test copre il periodo 2022-2025 come i dati di sviluppo (circa 4 anni per cliente), già filtrato sui POD; nessuna installazione prima del 2022. `data/fake_test.csv` = serie intera, `data/fake_test_2y.csv` = ultimi 2 anni (prova di robustezza); LOO principale sulla serie intera (`loo_pipeline --protocol serie_intera`, default).
 - Sab 17/10 ore 10:00: scelta `dip_spread` (variabilità del calo di mezzogiorno con le nuvole) come feature per il Task 1; prossimi passi: installazioni recenti e grandi impianti
 
 ## Punteggio misurato (validazione a un cliente alla volta)

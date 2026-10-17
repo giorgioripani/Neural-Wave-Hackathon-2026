@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Crea un finto test set dai dati di sviluppo: ultimi 2 anni di ogni cliente, senza etichette.
+"""Crea un finto test set dai dati di sviluppo, senza etichette.
 
-Uso: python demo/make_fake_test.py [--src data/clean/dev.parquet] [--dst data/fake_test.csv] [--sep ,]
+Per default la serie intera di ogni cliente, come il test vero (2022-2025, circa 4 anni).
+Con --last730 solo gli ultimi 2 anni di ogni cliente: prova di robustezza.
+
+Uso: python demo/make_fake_test.py [--src data/clean/dev.parquet] [--dst data/fake_test.csv] [--sep ,] [--last730]
+     python demo/make_fake_test.py --last730 --dst data/fake_test_2y.csv
 Stampa solo conteggi.
 """
 import argparse
@@ -22,6 +26,7 @@ def main() -> int:
     ap.add_argument("--src", default="data/clean/dev.parquet")
     ap.add_argument("--dst", default="data/fake_test.csv")
     ap.add_argument("--sep", default=",")
+    ap.add_argument("--last730", action="store_true", help="solo gli ultimi 2 anni di ogni cliente")
     a = ap.parse_args()
     Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
 
@@ -31,7 +36,7 @@ def main() -> int:
         SELECT {COLS} FROM (
             SELECT *, max(timestamp_epoch) OVER (PARTITION BY customer_id) AS t_end
             FROM read_parquet({q(a.src)})
-        ) WHERE timestamp_epoch > t_end - {TWO_YEARS_S}
+        ) WHERE {f"timestamp_epoch > t_end - {TWO_YEARS_S}" if a.last730 else "TRUE"}
     """)
     con.execute(f"""COPY (SELECT * FROM cut ORDER BY customer_id, timestamp_epoch)
                     TO {q(a.dst)} (HEADER, DELIMITER {q(a.sep)})""")

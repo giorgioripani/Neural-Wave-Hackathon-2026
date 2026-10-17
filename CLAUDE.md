@@ -22,7 +22,7 @@ Consegna: domenica 18 ottobre, ore 11:00. `python inference.py path/test.csv` de
 
 ## Dati
 - File: `energy_consumption_dev.csv` (40 clienti, 277 MB), `pv_labels_dev.csv`, `pv_extensions_labels_dev.csv`, `energy_consumption_unlabelled_dev.csv` (1148 curve, 7,9 GB). Periodo 2022-2025, copertura diversa per cliente.
-- Il test: 20 clienti nascosti, circa DUE ANNI di dati ciascuno. Ogni feature e metodo deve funzionare con 2 anni (o meno). In validazione, ritagliare le serie di sviluppo a finestre di 2 anni per imitare il test.
+- Il test: 20 clienti nascosti. Il test copre il periodo 2022-2025 come i dati di sviluppo (circa 4 anni per cliente), già filtrato sui POD; nessuna installazione prima del 2022. Validazione principale sulla serie intera di ogni cliente (`python -m src.eval.loo_pipeline`); le finestre di 2 anni restano solo come prova di robustezza.
 - Colonne: `customer_id`, `energy_consumption_kwh`, `timestamp_local`, `timestamp_epoch`.
 - VIETATO: meteo, posizione, irraggiamento, alba/tramonto o posizione del sole (anche calcolati), riconoscere i clienti. Permesse: feature di calendario (ora, giorno, mese). Per le fasce legate al sole usare ore fisse in UTC (da `timestamp_epoch`).
 - Errore del prof: nei dati di sviluppo tenere solo `customer_id LIKE 'POD%'` (toglie anche gli id nulli):
@@ -54,7 +54,7 @@ Lavora solo nel modulo della persona che ti usa. Se serve toccare un altro modul
 - `src.loading.load.load_test(path) -> (df, all_ids)`: lettore TOLLERANTE del test, usato da `inference.read_test`. Epoch non valido -> riga tolta, kWh non numerico -> NaN, righe malformate saltate; `all_ids` = tutti gli id del file (anche senza righe valide), `predict_all(df, used, all_ids)` dà una riga a ognuno. `main()` ha una rete di sicurezza: se tutto fallisce scrive tutti TRUE.
 - `src.loading.load.daily_features(df)`: una riga per cliente e giorno UTC (sempre 96 misure, niente problemi di ora legale): `n`, `total_kwh`, `midday` (10-13 UTC), `night` (0-4), `evening` (17-21), medie per quarto d'ora, `midday_night`, `midday_evening`, `weekday`, `month`.
 - `src.eval.score.official_score(pred, labels)`: F1, D, P e punteggio (D e P solo sui veri positivi). CLI: `python src/eval/score.py predictions.csv labels.csv`.
-- `src.eval.validate.validate(series, labels, featurize, fit_predict)`: leave-one-out su finestre di 2 anni, 5 giri, seed 42. Baseline: 54,6 punti.
+- `src.eval.validate.validate(series, labels, featurize, fit_predict)`: leave-one-out, 5 giri, seed 42; `days=730` (default) = finestre di 2 anni, solo prova di robustezza. Baseline a 2 anni: 54,6 punti.
 - `detect.predict(serie 15 min di tutti i clienti, come load_series) -> {customer_id: probabilità}`; regola (`dip_spread` + secondo passo `rec_drop`) in `artifacts/detect_params.json`, scritta da `src/models/run_detect.py`; `date.estimate(feat_cliente) -> 'AAAA-MM-GG'`;
   `capacity.estimate(feat_cliente, data) -> kWp`.
 [Aggiornare qui ogni cambio di firma.]

@@ -38,3 +38,18 @@ def test_loo_modes_leave_customer_out():
         pos = preds[preds["pv_installed_pred"]]
         assert pos["pv_installation_date_pred"].str.len().eq(10).all()
         assert (pos["pv_capacity_kwp_pred"] > 0).all()
+
+
+def test_full_series_protocol_uses_whole_series():
+    series, lab = _data()
+    seen = []
+
+    def featurize(s):
+        seen.append((s["customer_id"].iloc[0], len(s)))
+        return {}
+
+    summary, _ = validate(series, lab, featurize, lambda tr, tl, f: {"pv_installed": False},
+                          **lp.PROTOCOLS["serie_intera"])
+    assert len(summary) == 1  # deterministico: un giro
+    full = series.groupby("customer_id").size()
+    assert all(n == full[c] for c, n in seen) and len(seen) == len(full)

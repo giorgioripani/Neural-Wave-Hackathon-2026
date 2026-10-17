@@ -1,6 +1,12 @@
 """Punteggio leave-one-out della pipeline intera (detect + date + capacity), come inference.py.
 
-Usa validate.py (finestre di 2 anni, 5 giri, seed 42, stesse finestre della baseline).
+Protocolli (--protocol):
+    serie_intera    (default) ogni cliente lasciato fuori e` valutato sulla serie intera,
+                    come il test vero (2022-2025, circa 4 anni); deterministico, 1 giro
+    finestre_2anni  validate.py con finestre di 2 anni, 5 giri, seed 42 (stesse finestre
+                    della baseline): solo prova di robustezza
+L'addestramento (soglie di detect sulle finestre di run_detect, capacity come train_capacity)
+e` lo stesso nei due protocolli, come per gli artefatti usati da inference.py.
 Modi (stesse finestre per tutti, cambia solo da dove vengono i parametri):
     artefatti   detect_params.json e capacity.json attuali: OTTIMISTA, calcolati anche
                 sul cliente lasciato fuori
@@ -12,7 +18,7 @@ La struttura della regola (dip_spread, poi rec_drop) e il metodo geo_b restano q
 scelti sui 40 clienti: si ricalcolano soglie e coefficienti, non la scelta del metodo.
 Le estensioni non sono misurate (una sola etichettata nel dev).
 
-Uso: python -m src.eval.loo_pipeline [--modes artefatti,detect_loo,tutto_loo]
+Uso: python -m src.eval.loo_pipeline [--modes artefatti,detect_loo,tutto_loo] [--protocol serie_intera|finestre_2anni]
 Stampa <= 10 righe; previsioni per cliente in outputs/loo_pipeline_<modo>.csv.
 """
 from __future__ import annotations
@@ -34,6 +40,8 @@ from src.models import date as date_mod  # noqa: E402
 from src.models.capacity_common import daily_kw  # noqa: E402
 
 MODES = ["artefatti", "detect_loo", "tutto_loo"]
+PROTOCOLS = {"serie_intera": dict(rounds=1, days=100 * 366),  # finestra piu` lunga di ogni serie
+             "finestre_2anni": dict()}                        # default di validate.py
 DAY = pd.Timedelta(days=1)
 
 
@@ -127,6 +135,7 @@ def make_fit_predict(mode: str, win: pd.DataFrame | None = None, cap: pd.DataFra
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--modes", default=",".join(MODES))
+    ap.add_argument("--protocol", choices=list(PROTOCOLS), default="serie_intera")
     ap.add_argument("--series", default="data/clean/dev.parquet")
     ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
     a = ap.parse_args(argv)
@@ -141,9 +150,10 @@ def main(argv: list[str]) -> int:
     featurize = make_featurize()
     (ROOT / "outputs").mkdir(exist_ok=True)
     for mode in modes:
-        summary, preds = validate(series, labels, featurize, make_fit_predict(mode, win, cap))
-        preds.to_csv(ROOT / "outputs" / f"loo_pipeline_{mode}.csv", index=False)
-        print(f"{mode:10s} {report(summary)}")
+        summary, preds = validate(series, labels, featurize, make_fit_predict(mode, win, cap),
+                                  **PROTOCOLS[a.protocol])
+        preds.to_csv(ROOT / "outputs" / f"loo_pipeline_{a.protocol}_{mode}.csv", index=False)
+        print(f"{a.protocol} {mode:10s} {report(summary)}")
     return 0
 
 
