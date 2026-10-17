@@ -89,7 +89,7 @@ def test_prepare_filters_and_types(tmp_path):
                          + "XYZ;0.1;2024-01-01 00:00:00;1704064500\n")
     assert r.returncode == 0, r.stderr
     out = pd.read_parquet(dst)
-    assert out["customer_id"].tolist() == ["POD001", "POD002"]
+    assert sorted(out["customer_id"]) == ["POD001", "POD002"]
     assert str(out["energy_consumption_kwh"].dtype) == "float64"
     assert str(out["timestamp_epoch"].dtype) == "int64"
 
@@ -113,3 +113,19 @@ def test_edge_cases(tmp_path):
     assert date_score("2024-13-01", "2024-05-01") == 0.0
     assert date_score("2024-05-01", pd.NaT) == 0.0
     assert capacity_score("abc", 10) == 0.0
+
+
+def test_prepare_failure_leaves_no_file(tmp_path):
+    r, dst = run_prepare(tmp_path, HEADER + "POD001;abc;x;1704064500\n")
+    assert r.returncode != 0
+    assert not dst.exists() and not (tmp_path / "out.parquet.tmp").exists()
+    assert not (tmp_path / ".duckdb_tmp").exists()
+
+
+def test_prepare_sort_flag(tmp_path):
+    body = HEADER + "POD002;0.5;x;1704065400\nPOD001;0.25;x;1704064500\n"
+    r, dst = run_prepare(tmp_path, body)
+    assert r.returncode == 0, r.stderr
+    assert pd.read_parquet(dst)["customer_id"].tolist() == ["POD002", "POD001"]  # ordine del CSV
+    r, dst = run_prepare(tmp_path, body, "--sort")
+    assert pd.read_parquet(dst)["customer_id"].tolist() == ["POD001", "POD002"]
