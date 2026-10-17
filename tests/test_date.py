@@ -297,3 +297,301 @@ def test_run_date_dev_v4_compares_with_v2_only():
     from src.models.run_date_dev import COMPARE, DEFAULT_METHOD, METHODS
     assert DEFAULT_METHOD == "v2" and "v4" in METHODS
     assert COMPARE["v4"] == ["v2"] and COMPARE["v2"] == ["v1", "v3"]
+
+
+# --- estimate_cfg: aggregazione dei giorni ---
+
+def _weekend_series(install_day=300, days=730, seed=42):
+    """SINTETICA, UTC: notte 0,2 kWh; mezzogiorno 0,4 kWh nei feriali e 0,05 nel fine
+    settimana (casa vuota), con rumore; dal giorno install_day mezzogiorno x 0,6."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2023-01-02", periods=days * 96, freq="15min", tz="UTC")  # lunedi`
+    day = np.arange(len(idx)) // 96
+    mid = (idx.hour >= 10) & (idx.hour < 13)
+    weekend = idx.dayofweek >= 5
+    level = np.where(weekend, 0.05, 0.4) * np.where(day >= install_day, 0.6, 1.0)
+    kwh = np.where(mid, level, 0.2) + 0.03 * rng.standard_normal(len(idx))
+    return pd.DataFrame({"ts_epoch": idx.astype("int64") // 10**9, "kwh": np.clip(kwh, 0, None)})
+
+
+def test_cfg_all_identical_to_v2(synth):
+    from src.models.date import estimate_cfg, estimate_v2
+    series, _ = synth
+    cases = [daily_midday_ratio(series[series["customer_id"] == c]) for c in series["customer_id"].unique()]
+    cases += [_daily_steps([(200, -0.5)]).iloc[::3], _daily_steps([])]  # con buchi e senza gradino
+    for daily in cases:
+        assert estimate_cfg(daily, "all") == estimate_v2(daily)
+    assert estimate_cfg(cases[0]) == estimate_v2(cases[0])  # default "all"
+
+
+def test_cfg_calendar_core_matches_v2_on_complete_days():
+    from src.models.date import _step_regression_calendar, estimate_v2
+    for daily in (_daily_steps([(200, -0.5)]), _daily_steps([(45, -0.6)]), _daily_steps([])):
+        d = daily.assign(date=pd.to_datetime(daily["date"]))
+        assert _step_regression_calendar(d, d["date"].iloc[0].strftime("%Y-%m-%d")) == estimate_v2(daily)
+
+
+def test_cfg_weekdays_finds_date_with_low_weekends():
+    from src.models.date import estimate_cfg
+    daily = daily_midday_ratio(_weekend_series())
+    true = pd.Timestamp("2023-01-02") + pd.Timedelta(days=300)
+    assert abs((pd.Timestamp(estimate_cfg(daily, "weekdays")) - true).days) <= 3
+    wk = pd.Timestamp(estimate_cfg(daily, "weekly_median"))
+    assert wk.dayofweek == 0 and abs((wk - true).days) <= 7
+
+
+def test_cfg_weekly_median_drops_short_weeks():
+    from src.models.date import _weekly_median
+    d = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=14, freq="D"), "midday_ratio": np.arange(14.0)})
+    d = d.drop(index=[7, 8, 9, 10])  # seconda settimana: 3 giorni validi
+    w = _weekly_median(d)
+    assert list(w["date"]) == [pd.Timestamp("2024-01-01")] and w["midday_ratio"].iloc[0] == 3.0
+
+
+def test_cfg_no_step_returns_first_day_and_bad_agg():
+    from src.models.date import estimate_cfg
+    daily = _daily_steps([])
+    # domenica: primo giorno di daily, non del filtro. Solo weekdays: con ~104 righe
+    # settimanali la regola del 5% si supera piu` facilmente sul rumore (limite noto).
+    assert estimate_cfg(daily, "weekdays") == "2023-01-01"
+    flat = daily.assign(midday_ratio=1.0)
+    assert estimate_cfg(flat, "weekly_median") == "2023-01-01"
+    with pytest.raises(ValueError):
+        estimate_cfg(daily, "mensile")
+
+
+def test_compare_agg_stats():
+    from src.models.run_date_dev import compare_agg
+    per = pd.DataFrame({"D_all": [0.5, 0.5, 0.5, 0.5], "D_weekdays": [0.9, 0.9, 0.9, 0.1],
+                        "D_weekly_median": [0.5, 0.5, 0.5, 0.5],
+                        "err_all": [20, 20, 20, 20], "err_weekdays": [5, 5, 14, 40],
+                        "err_weekly_median": [20, 20, 20, np.nan]})
+    r = compare_agg(per, reps=500)
+    assert r["mean"]["weekdays"] == pytest.approx(0.7)
+    assert (r["weekdays"]["better"], r["weekdays"]["worse"]) == (3, 1)  # 6 gg in meno conta, 15 in piu` conta
+    lo, hi = r["weekdays"]["ci"]
+    assert lo <= r["weekdays"]["diff"] <= hi and lo >= -0.4 and hi <= 0.4
+    assert r["weekly_median"]["ci"] == (0.0, 0.0) and r["weekly_median"]["better"] == 0
+    # LOCO: senza il cliente 4 weekdays vince (0,9 > 0,5); senza uno dei primi tre la media
+    # degli altri e` (0,9 + 0,9 + 0,1) / 3 = 0,633 > 0,5: sempre weekdays
+    assert r["chosen"] == {"all": 0, "weekdays": 4, "weekly_median": 0}
+    assert r["nested"] == pytest.approx(0.7)
+
+
+def test_compare_agg_tie_goes_to_all():
+    from src.models.run_date_dev import compare_agg
+    per = pd.DataFrame({f"D_{a}": [0.4, 0.6] for a in ("all", "weekdays", "weekly_median")}
+                       | {f"err_{a}": [10, 10] for a in ("all", "weekdays", "weekly_median")})
+    r = compare_agg(per, reps=10)
+    assert r["chosen"] == {"all": 2, "weekdays": 0, "weekly_median": 0}
+
+
+# --- estimate_refined ---
+
+def _winter_peak(step_day, seed, days=730, width=40):
+    """SINTETICO: log(midday_ratio) = picco invernale stretto (gaussiano attorno al
+    15 gennaio, NON sinusoidale) + gradino -0,5 al giorno step_day + rumore."""
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2023-01-01", periods=days, freq="D")
+    doy = dates.dayofyear.to_numpy()
+    dist = np.minimum(np.abs(doy - 15), 365 - np.abs(doy - 15))
+    y = 0.8 * np.exp(-(dist / width) ** 2) + np.where(np.arange(days) >= step_day, -0.5, 0.0)
+    y = y + 0.1 * rng.standard_normal(days)
+    return pd.DataFrame({"date": dates.date, "midday_ratio": np.exp(y)})
+
+
+def test_refined_moves_closer_with_non_sinusoidal_season():
+    from src.models.date import estimate_refined, estimate_v2
+    daily, true = _winter_peak(300, seed=2), pd.Timestamp(_day(300))
+    e2 = abs((pd.Timestamp(estimate_v2(daily)) - true).days)
+    er = abs((pd.Timestamp(estimate_refined(daily)) - true).days)
+    assert e2 >= 3 and er < e2
+
+
+def test_refined_no_step_returns_first_day():
+    from src.models.date import estimate_refined, estimate_v2
+    for daily in (_daily_steps([]), _daily_steps([]).assign(midday_ratio=1.0)):
+        assert estimate_v2(daily) == "2023-01-01"
+        assert estimate_refined(daily) == "2023-01-01"
+
+
+def test_refined_stays_within_window_and_estimate_unchanged():
+    from src.models import date as dm
+    daily = _daily_steps([(300, -0.8)])
+    t1, tr = pd.Timestamp(dm.estimate_v2(daily)), pd.Timestamp(dm.estimate_refined(daily, half_window=20))
+    assert abs((tr - t1).days) <= 20
+    assert dm.estimate is dm.estimate_v2
+
+
+def test_compare_refined_variants():
+    from src.models.run_date_dev import REFINED_METHODS, compare_agg
+    assert list(REFINED_METHODS) == ["v2", "refined"]
+    per = pd.DataFrame({"D_v2": [0.5, 0.5], "D_refined": [0.5, 0.5], "err_v2": [10, 10], "err_refined": [3, 20]})
+    r = compare_agg(per, reps=10, variants=REFINED_METHODS)
+    assert r["chosen"] == {"v2": 2, "refined": 0}  # parita`: vince v2
+    assert (r["refined"]["better"], r["refined"]["worse"]) == (1, 1)
+
+
+# --- run_date_dev: --protocol last730 e --nested-all ---
+
+def _pv_series(cid, days, install_day, seed=42):
+    """SINTETICA, UTC: notte 0,2 kWh, mezzogiorno 0,4 kWh, dal giorno install_day 0,2."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2022-01-01", periods=days * 96, freq="15min", tz="UTC")
+    day = np.arange(len(idx)) // 96
+    mid = (idx.hour >= 10) & (idx.hour < 13)
+    kwh = np.where(mid, np.where(day >= install_day, 0.2, 0.4), 0.2) + 0.02 * rng.standard_normal(len(idx))
+    return pd.DataFrame({"customer_id": cid, "ts_epoch": idx.astype("int64") // 10**9,
+                         "kwh": np.clip(kwh, 0, None)})
+
+
+def test_last730_daily_cut():
+    from src.models.run_date_dev import last730_daily
+    daily = last730_daily(_pv_series("A", 1000, 100))
+    assert len(daily) == 730
+    assert pd.Timestamp(daily["date"].min()) == pd.Timestamp("2022-01-01") + pd.Timedelta(days=270)
+
+
+def test_evaluate_last730_true_before():
+    from src.models.run_date_dev import evaluate_last730, last730_daily
+    inside = evaluate_last730(last730_daily(_pv_series("A", 1000, 600)), pd.Timestamp("2022-01-01") + pd.Timedelta(days=600))
+    assert not inside["true_before"] and abs(inside["err_days"]) <= 3 and inside["score"] > 0.9
+    before = evaluate_last730(last730_daily(_pv_series("B", 1000, 100)), pd.Timestamp("2022-04-11"))
+    assert before["true_before"] and before["pred_date"] == str(before["win_start"])  # nessun gradino: primo giorno
+
+
+def test_last730_summary_and_nested_all():
+    from src.models.run_date_dev import NESTED_ALL, last730_summary, nested_all
+    res = pd.DataFrame({"score": [1.0, 0.5, 0.0, 0.2], "err_days": [0, 15, np.nan, 200],
+                        "true_before": [False, False, True, True]})
+    sm = last730_summary(res)
+    assert sm["D"] == pytest.approx(0.425) and sm["over30"] == 2 and sm["med_err"] == 15
+    assert sm["n_before"] == 2 and sm["D_before"] == pytest.approx(0.1) and sm["D_inside"] == pytest.approx(0.75)
+    assert list(NESTED_ALL)[0] == "v2" and {"v1", "v3", "v4", "weekdays", "weekly_median", "refined"} <= set(NESTED_ALL)
+    per = pd.DataFrame({f"D_{m}": [0.5, 0.5, 0.5] for m in NESTED_ALL} | {f"err_{m}": [1, 1, 1] for m in NESTED_ALL})
+    assert nested_all(per)["chosen"]["v2"] == 3  # tutto pari: vince la v2
+    per["D_v4"] = [0.9, 0.9, 0.1]
+    r = nested_all(per)
+    # senza il cliente 1 o 2: v4 = (0,9 + 0,1) / 2 = 0,5, pari alla v2 -> v2; senza il 3: v4 = 0,9
+    assert (r["chosen"]["v2"], r["chosen"]["v4"]) == (2, 1)
+    assert r["nested"] == pytest.approx((0.5 + 0.5 + 0.1) / 3)
+
+
+def test_run_date_dev_last730_and_nested_all(tmp_path, monkeypatch, capsys):
+    from src.models import run_date_dev
+    s = pd.concat([_pv_series("POD0001", 1000, 600), _pv_series("POD0002", 1000, 100, seed=1)])
+    idx = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
+    pd.DataFrame({"customer_id": s["customer_id"], "energy_consumption_kwh": s["kwh"],
+                  "timestamp_local": idx.dt.tz_convert("Europe/Zurich").dt.strftime("%Y-%m-%d %H:%M:%S"),
+                  "timestamp_epoch": s["ts_epoch"]}).to_csv(tmp_path / "s.csv", index=False)
+    d600 = (pd.Timestamp("2022-01-01") + pd.Timedelta(days=600)).date()
+    (tmp_path / "l.csv").write_text("customer_id;pv_installed;pv_installation_date;pv_capacity_kwp\n"
+                                    f"POD0001;TRUE;{d600};4.0\nPOD0002;TRUE;2022-04-11;5.0\n")
+    base = ["run_date_dev", "--series", str(tmp_path / "s.csv"), "--labels", str(tmp_path / "l.csv")]
+    for extra, n_lines in ((["--protocol", "last730"], 2), (["--nested-all"], 2),
+                           (["--protocol", "last730", "--nested-all"], 4)):
+        monkeypatch.setattr(sys, "argv", base + extra + ["--out", str(tmp_path / "o.csv")])
+        assert run_date_dev.main() == 0
+        out = capsys.readouterr().out.strip().splitlines()
+        assert len(out) == n_lines
+    assert "Data vera prima della finestra: 1 clienti" in out[1]
+    assert out[2].startswith("Selezione annidata LOCO su tutte (last730)")
+    pc = pd.read_csv(tmp_path / "o_per_version.csv")
+    assert len(pc) == 2 and "D_refined" in pc.columns
+    monkeypatch.setattr(sys, "argv", base + ["--protocol", "last730", "--refine"])
+    with pytest.raises(SystemExit):
+        run_date_dev.main()
+
+
+# --- run_date_dev: --compare-final e --protocol full ---
+
+def test_protocol_windows_shapes():
+    from src.models.run_date_dev import POSITIONS, protocol_windows
+    s = _pv_series("A", 1000, 600)
+    true = pd.Timestamp("2022-01-01") + pd.Timedelta(days=600)
+    full = protocol_windows(s, true, "full")
+    assert len(full) == 1 and len(full[0][0]) == 1000 and len(full[0][1]) == len(s)
+    last = protocol_windows(s, true, "last730")
+    assert len(last) == 1 and len(last[0][0]) == 730
+    win = protocol_windows(s, true, "windows")
+    assert len(win) == len(POSITIONS)
+    for daily_w, series_w in win:  # la serie della finestra copre gli stessi giorni del daily
+        days = pd.to_datetime(series_w["ts_epoch"], unit="s").dt.normalize()
+        assert set(days.dt.date) == set(daily_w["date"]) and len(daily_w) == 730
+
+
+def test_final_v2_matches_evaluate_customer():
+    from src.models.run_date_dev import evaluate_customer, final_per_customer
+    s = _pv_series("A", 1000, 600)
+    true = pd.Timestamp("2022-01-01") + pd.Timedelta(days=600)
+    got = final_per_customer(s, true, "windows")
+    from src.models.date import estimate_v2
+    rows = evaluate_customer(daily_midday_ratio(s), true, method=estimate_v2)
+    assert got["D_v2"] == pytest.approx(np.mean([r["score"] for r in rows]))
+    assert set(got) == {f"{k}_{c}" for k in ("D", "err") for c in ("v2", "refined", "v2_refine", "refined_refine")}
+
+
+def test_final_refine_uses_same_window(monkeypatch):
+    from src.models import run_date_dev
+    seen = []
+
+    def fake_refine(series_w, date0):
+        ts = pd.to_datetime(series_w["ts_epoch"], unit="s")
+        seen.append((ts.min(), ts.max()))
+        return "2022-01-01", "pv_gia_presente"
+    monkeypatch.setattr(run_date_dev, "refine_date0", fake_refine)
+    s = _pv_series("A", 1000, 600)
+    true = pd.Timestamp("2022-01-01") + pd.Timedelta(days=600)
+    for protocol, n_win in (("windows", 3), ("last730", 1), ("full", 1)):
+        seen.clear()
+        got = run_date_dev.final_per_customer(s, true, protocol)
+        assert len(seen) == 2 * n_win  # v2_refine e refined_refine, una volta per finestra
+        wins = run_date_dev.protocol_windows(s, true, protocol)
+        expected = [(pd.to_datetime(w[1]["ts_epoch"], unit="s").min(), pd.to_datetime(w[1]["ts_epoch"], unit="s").max())
+                    for w in wins]
+        assert sorted(set(seen)) == sorted(set(expected))
+        assert got["D_v2_refine"] < got["D_v2"]  # il finto refine sposta la data al 2022-01-01
+
+
+def test_run_date_dev_compare_final(tmp_path, monkeypatch, capsys):
+    from src.models import run_date_dev
+    monkeypatch.setattr(run_date_dev, "refine_date0", lambda s, d: (d, "pv_assente_prima"))
+    s = pd.concat([_pv_series("POD0001", 1000, 600), _pv_series("POD0002", 1000, 300, seed=1)])
+    idx = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
+    pd.DataFrame({"customer_id": s["customer_id"], "energy_consumption_kwh": s["kwh"],
+                  "timestamp_local": idx.dt.tz_convert("Europe/Zurich").dt.strftime("%Y-%m-%d %H:%M:%S"),
+                  "timestamp_epoch": s["ts_epoch"]}).to_csv(tmp_path / "s.csv", index=False)
+    d = lambda k: (pd.Timestamp("2022-01-01") + pd.Timedelta(days=k)).date()  # noqa: E731
+    (tmp_path / "l.csv").write_text("customer_id;pv_installed;pv_installation_date;pv_capacity_kwp\n"
+                                    f"POD0001;TRUE;{d(600)};4.0\nPOD0002;TRUE;{d(300)};5.0\n")
+    base = ["run_date_dev", "--series", str(tmp_path / "s.csv"), "--labels", str(tmp_path / "l.csv"), "--compare-final"]
+    for protocol in ("windows", "last730", "full"):
+        monkeypatch.setattr(sys, "argv", base + ["--protocol", protocol, "--out", str(tmp_path / f"{protocol}.csv")])
+        assert run_date_dev.main() == 0
+        out = capsys.readouterr().out.strip().splitlines()
+        assert len(out) == 5 and len(out) <= 10
+        assert out[0].startswith(f"Protocollo {protocol}: clienti 2")
+        assert out[1].startswith("refined:") and out[2].startswith("v2_refine:") and out[3].startswith("refined_refine:")
+        assert "scelte: v2 " in out[4]
+        assert out[2].split(", diff D ")[1].startswith("+0.000")  # refine finto che non cambia nulla
+    monkeypatch.setattr(sys, "argv", base + ["--nested-all"])
+    with pytest.raises(SystemExit):
+        run_date_dev.main()
+
+
+def test_protocol_full_with_nested_all(tmp_path, monkeypatch, capsys):
+    from src.models import run_date_dev
+    s = _pv_series("POD0001", 900, 500)
+    idx = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
+    pd.DataFrame({"customer_id": s["customer_id"], "energy_consumption_kwh": s["kwh"],
+                  "timestamp_local": idx.dt.tz_convert("Europe/Zurich").dt.strftime("%Y-%m-%d %H:%M:%S"),
+                  "timestamp_epoch": s["ts_epoch"]}).to_csv(tmp_path / "s.csv", index=False)
+    (tmp_path / "l.csv").write_text("customer_id;pv_installed;pv_installation_date;pv_capacity_kwp\n"
+                                    f"POD0001;TRUE;{(pd.Timestamp('2022-01-01') + pd.Timedelta(days=500)).date()};4.0\n")
+    monkeypatch.setattr(sys, "argv", ["run_date_dev", "--series", str(tmp_path / "s.csv"), "--labels",
+                                      str(tmp_path / "l.csv"), "--protocol", "full", "--nested-all",
+                                      "--out", str(tmp_path / "o.csv")])
+    assert run_date_dev.main() == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out[0].startswith("Protocollo full") and "Data vera prima della finestra: 0 clienti" in out[1]
+    assert len(out) == 4
