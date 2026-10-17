@@ -54,7 +54,7 @@ Lavora solo nel modulo della persona che ti usa. Se serve toccare un altro modul
 - `src.loading.load.daily_features(df)`: una riga per cliente e giorno UTC (sempre 96 misure, niente problemi di ora legale): `n`, `total_kwh`, `midday` (10-13 UTC), `night` (0-4), `evening` (17-21), medie per quarto d'ora, `midday_night`, `midday_evening`, `weekday`, `month`.
 - `src.eval.score.official_score(pred, labels)`: F1, D, P e punteggio (D e P solo sui veri positivi). CLI: `python src/eval/score.py predictions.csv labels.csv`.
 - `src.eval.validate.validate(series, labels, featurize, fit_predict)`: leave-one-out su finestre di 2 anni, 5 giri, seed 42. Baseline: 54,6 punti.
-- `detect.predict(feat) -> {customer_id: probabilità}`; `date.estimate(feat_cliente) -> 'AAAA-MM-GG'`;
+- `detect.predict(serie 15 min di tutti i clienti, come load_series) -> {customer_id: probabilità}`; regola (`dip_spread` + secondo passo `rec_drop`) in `artifacts/detect_params.json`, scritta da `src/models/run_detect.py`; `date.estimate(feat_cliente) -> 'AAAA-MM-GG'`;
   `capacity.estimate(feat_cliente, data) -> kWp`.
 [Aggiornare qui ogni cambio di firma.]
 

@@ -16,7 +16,28 @@ import sys
 import traceback
 from pathlib import Path
 
-import pandas as pd
+# Pacchetti importati dalla pipeline: {nome pip: nome import}. Si controllano
+# prima di tutto, cosi` un ambiente incompleto si vede subito; si va avanti con
+# le riserve (senza pandas pero` il programma non puo` leggere il test).
+PACKAGES = {"numpy": "numpy", "pandas": "pandas", "scipy": "scipy", "scikit-learn": "sklearn",
+            "pyarrow": "pyarrow", "duckdb": "duckdb", "ruptures": "ruptures"}
+
+
+def check_packages() -> list[str]:
+    missing = []
+    for pip_name, mod in PACKAGES.items():
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            missing.append(pip_name)
+            print(f"ATTENZIONE: manca il pacchetto {pip_name}, "
+                  "installare con pip install -r requirements.txt", file=sys.stderr)
+    return missing
+
+
+MISSING_PACKAGES = check_packages()
+
+import pandas as pd  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 ARTIFACTS = ROOT / "artifacts"
@@ -92,8 +113,13 @@ def warn(what: str, cid: str, e: Exception) -> None:
 
 def call_detect(mod, df: pd.DataFrame) -> dict:
     """detect.predict(serie di tutti i clienti) -> {customer_id: probabilita`}."""
-    probs = mod.predict(df)
-    return {str(k): float(v) for k, v in dict(probs).items()}
+    out = {}
+    for k, v in dict(mod.predict(df)).items():
+        try:
+            out[str(k)] = float(v)
+        except (TypeError, ValueError):
+            out[str(k)] = float("nan")  # valore illeggibile: come un cliente mancante
+    return out
 
 
 def call_date(mod, series: pd.DataFrame) -> str:
@@ -118,21 +144,36 @@ def first_day(series: pd.DataFrame) -> str:
 
 # ---------------------------------------------------------------------------
 
-def predict_all(df: pd.DataFrame) -> list[dict]:
+def predict_all(df: pd.DataFrame, used: dict | None = None) -> list[dict]:
+    """Una riga per cliente. Se `used` e` un dict, vi scrive quanti clienti
+    hanno usato la riserva di detect, date e capacity."""
+    used = {} if used is None else used
+    used.update(detect=0, date=0, capacity=0)
     customers = df["customer_id"].dropna().unique().tolist()
     detect, date_mod, capacity = load_module("detect"), load_module("date"), load_module("capacity")
 
-    probs = {}
+    # Riserva di detect: TRUE per tutti (sul dev "tutti TRUE" vale 57,8 punti, "tutti FALSE" 0).
+    probs = None
     if detect is not None:
         try:
             probs = call_detect(detect, df)
         except Exception as e:
             warn("detect", "*", e)
+    if probs is None:
+        print("[riserva] detect non disponibile: tutti TRUE")
+        probs = {}
+        used["detect"] = len(customers)
+    else:
+        n_missing = sum(1 for c in customers if pd.isna(probs.get(c)))
+        used["detect"] = n_missing
+        if n_missing:
+            print(f"[riserva] detect: {n_missing} clienti senza probabilita', messi TRUE")
 
     rows = []
     for cid, series in df.groupby("customer_id", sort=False):
         row = {"customer_id": cid, "pv_installed": False, "pv_installation_date": "", "pv_capacity_kwp": ""}
-        if probs.get(cid, 0.0) >= PV_THRESHOLD:
+        p = probs.get(cid)
+        if pd.isna(p) or p >= PV_THRESHOLD:
             row["pv_installed"] = True
             date = None
             if date_mod is not None:
@@ -140,15 +181,20 @@ def predict_all(df: pd.DataFrame) -> list[dict]:
                     date = call_date(date_mod, series)
                 except Exception as e:
                     warn("date", cid, e)
-            date = date or first_day(series)
+            if not date:
+                date = first_day(series)
+                used["date"] += 1
             kwp = None
             if capacity is not None:
                 try:
                     kwp = call_capacity(capacity, series, date)
                 except Exception as e:
                     warn("capacity", cid, e)
+            if kwp is None:
+                kwp = DEFAULT_KWP
+                used["capacity"] += 1
             row["pv_installation_date"] = date
-            row["pv_capacity_kwp"] = round(kwp if kwp is not None else DEFAULT_KWP, 2)
+            row["pv_capacity_kwp"] = round(kwp, 2)
         rows.append(row)
     assert len(rows) == len(customers)
     return rows
@@ -179,10 +225,14 @@ def main(argv: list[str]) -> int:
     n_null = int(df["customer_id"].isna().sum())
     if n_null:
         print(f"ATTENZIONE: {n_null} righe senza customer_id (nessun cliente a cui attribuirle)")
-    rows = predict_all(df)
+    used = {}
+    rows = predict_all(df, used)
     write_outputs(rows, ext_rows=[])  # estensioni: per ora solo intestazione
     n_pv = sum(r["pv_installed"] for r in rows)
     print(f"predictions.csv: {len(rows)} clienti ({n_pv} con fotovoltaico)")
+    print(f"Riserve usate: detect {used['detect']}, date {used['date']}, capacity {used['capacity']}")
+    if any(used.values()):
+        print("ATTENZIONE: alcune previsioni usano le riserve, controllare i messaggi sopra")
     return 0
 
 
