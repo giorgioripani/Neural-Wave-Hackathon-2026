@@ -595,3 +595,37 @@ def test_protocol_full_with_nested_all(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out.strip().splitlines()
     assert out[0].startswith("Protocollo full") and "Data vera prima della finestra: 0 clienti" in out[1]
     assert len(out) == 4
+
+
+def test_fit_v2_curve_matches_estimate_v2(synth):
+    from src.models.date import estimate_v2, fit_v2_curve
+    series, _ = synth
+    cases = [daily_midday_ratio(series[series["customer_id"] == c]) for c in series["customer_id"].unique()]
+    cases += [_daily_steps([(200, -0.5)]), _daily_steps([(200, -0.5)]).iloc[::3], _daily_steps([]),
+              _daily_steps([]).iloc[:40]]
+    for daily in cases:
+        date, curve = fit_v2_curve(daily)
+        assert date == estimate_v2(daily)
+        assert list(curve.columns) == ["date", "log_ratio", "fitted"]
+        assert len(curve) == len(daily) and np.isfinite(curve["fitted"]).all()
+    date, curve = fit_v2_curve(_daily_steps([(200, -0.5)]))
+    before = curve.loc[curve["date"] < pd.Timestamp(date), "fitted"].mean()
+    after = curve.loc[curve["date"] >= pd.Timestamp(date), "fitted"].mean()
+    assert before - after == pytest.approx(0.5, abs=0.1)  # il gradino adattato e` quello vero
+
+
+def test_fit_v2_curve_matches_estimate_v2(synth):
+    from src.models.date import estimate_v2, fit_v2_curve
+    series, _ = synth
+    cases = [daily_midday_ratio(series[series["customer_id"] == c]) for c in series["customer_id"].unique()]
+    cases += [_daily_steps([(200, -0.5)]), _daily_steps([(200, -0.5)]).iloc[::3], _daily_steps([]),
+              _daily_steps([]).iloc[:40]]
+    for daily in cases:
+        date, curve = fit_v2_curve(daily)
+        assert date == estimate_v2(daily)
+        assert list(curve.columns) == ["date", "log_ratio", "fitted"]
+        assert len(curve) == len(daily) and np.isfinite(curve["fitted"]).all()
+    date, curve = fit_v2_curve(_daily_steps([(200, -0.5)]))
+    before = curve.loc[curve["date"] < pd.Timestamp(date), "fitted"].mean()
+    after = curve.loc[curve["date"] >= pd.Timestamp(date), "fitted"].mean()
+    assert before - after == pytest.approx(0.5, abs=0.1)  # il gradino adattato e` quello vero

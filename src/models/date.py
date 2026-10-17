@@ -326,3 +326,69 @@ def estimate_refined(daily: pd.DataFrame, half_window: int = REFINE_HALF_WINDOW)
     if best_k is None or best_drop >= 0:
         return t1
     return dl.iloc[best_k].strftime("%Y-%m-%d")
+
+
+def fit_v2_curve(daily: pd.DataFrame) -> tuple[str, pd.DataFrame]:
+    """Come estimate_v2, ma restituisce anche il modello adattato (per i grafici).
+
+    -> (data, curva). data: identica a estimate_v2(daily). curva: una riga per
+    giorno valido con date, log_ratio (log del rapporto tagliato ai quantili
+    1%-99%, come nella v2) e fitted (costante + sin/cos annuale + gradino alla
+    data; senza gradino, solo costante + sin/cos). Serie troppo corta: data =
+    primo giorno, fitted = media.
+    """
+    d, y, base = _prepare(daily)
+    first = d["date"].iloc[0].strftime("%Y-%m-%d")
+    n = len(d)
+    if y is None:
+        yy = np.log(d["midday_ratio"].clip(lower=EPS_KWH).to_numpy())
+        return first, pd.DataFrame({"date": d["date"], "log_ratio": yy, "fitted": np.full(n, yy.mean())})
+
+    def fit(X):
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+        r = y - X @ beta
+        return X @ beta, float(r @ r)
+
+    fit0, sse0 = fit(base)
+    best_k, best_sse, best_fit = None, np.inf, None
+    for k in range(MIN_SEGMENT_DAYS, n - MIN_SEGMENT_DAYS + 1):
+        fk, s = fit(np.column_stack([base, (np.arange(n) >= k).astype(float)]))
+        if s < best_sse:
+            best_k, best_sse, best_fit = k, s, fk
+    if sse0 <= 0 or (sse0 - best_sse) / sse0 < MIN_SSE_GAIN:
+        return first, pd.DataFrame({"date": d["date"], "log_ratio": y, "fitted": fit0})
+    return (d["date"].iloc[best_k].strftime("%Y-%m-%d"),
+            pd.DataFrame({"date": d["date"], "log_ratio": y, "fitted": best_fit}))
+
+
+def fit_v2_curve(daily: pd.DataFrame) -> tuple[str, pd.DataFrame]:
+    """Come estimate_v2, ma restituisce anche il modello adattato (per i grafici).
+
+    -> (data, curva). data: identica a estimate_v2(daily). curva: una riga per
+    giorno valido con date, log_ratio (log del rapporto tagliato ai quantili
+    1%-99%, come nella v2) e fitted (costante + sin/cos annuale + gradino alla
+    data; senza gradino, solo costante + sin/cos). Serie troppo corta: data =
+    primo giorno, fitted = media.
+    """
+    d, y, base = _prepare(daily)
+    first = d["date"].iloc[0].strftime("%Y-%m-%d")
+    n = len(d)
+    if y is None:
+        yy = np.log(d["midday_ratio"].clip(lower=EPS_KWH).to_numpy())
+        return first, pd.DataFrame({"date": d["date"], "log_ratio": yy, "fitted": np.full(n, yy.mean())})
+
+    def fit(X):
+        beta = np.linalg.lstsq(X, y, rcond=None)[0]
+        r = y - X @ beta
+        return X @ beta, float(r @ r)
+
+    fit0, sse0 = fit(base)
+    best_k, best_sse, best_fit = None, np.inf, None
+    for k in range(MIN_SEGMENT_DAYS, n - MIN_SEGMENT_DAYS + 1):
+        fk, s = fit(np.column_stack([base, (np.arange(n) >= k).astype(float)]))
+        if s < best_sse:
+            best_k, best_sse, best_fit = k, s, fk
+    if sse0 <= 0 or (sse0 - best_sse) / sse0 < MIN_SSE_GAIN:
+        return first, pd.DataFrame({"date": d["date"], "log_ratio": y, "fitted": fit0})
+    return (d["date"].iloc[best_k].strftime("%Y-%m-%d"),
+            pd.DataFrame({"date": d["date"], "log_ratio": y, "fitted": best_fit}))
