@@ -5,3 +5,5 @@ v1 (change point sul rapporto, finestre UTC fisse): D 0,547; mediana 5,5 gg; 9 c
 v2 (stagionalità + gradino costante, regola “nessun gradino”): D 0,582; mediana 4,0 gg; 7 clienti oltre 30 gg. Scelta.
 v3 (gradino stagionale con termini post·sin e post·cos): D 0,568; mediana 4,5 gg; 6 clienti oltre 30 gg. Scartata: sistema POD22 e POD23 ma crea gradini falsi quando ci sono meno di circa sei mesi di dati prima dell’installazione (POD34, POD35).
 - 2026-10-17 Andrea (agente): `prepare_data.py` con tipi dichiarati per tutte le colonne (errore invece di testo se il decimale è sbagliato), conteggio duplicati; nuovo `src/eval/score.py` con la formula ufficiale (D e P solo sui veri positivi) e test.
+- 2026-10-17 Andrea (agente): `load_series`/`daily_features` in `src/loading/load.py` e `src/eval/validate.py` (leave-one-out, finestre di 730 giorni, 5 giri, seed 42). Baseline (sempre TRUE, data a metà finestra, kWp mediano): 54,58 ± 0,41 (F1 0,710, D 0,045, P 0,415).
+- 2026-10-17 Andrea: scartata la posizione FISSA della data nella finestra (25/50/75%): premia chi indovina la metà della finestra; usata posizione casuale tra 10% e 90%.
