@@ -12,9 +12,19 @@ WINDOW_DAYS si usa tutta la serie. Nessun parametro scelto sui risultati.
 Uso (dalla radice del repo):
     python src/models/run_date_dev.py [--series data/clean/dev.parquet]
         [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3|v4] [--refine]
+        [--compare-agg]
 
 --method di default: v2, il metodo usato da inference.py (date.estimate).
 v1, v2, v3 si confrontano fra loro; v4 (v2 + secondo gradino) solo con v2.
+--compare-agg: stesso protocollo di finestre, D per cliente (media delle sue
+finestre) per date.estimate_cfg con agg = all, weekdays, weekly_median. Stampa
+solo: D medio di ciascuna; per weekdays e weekly_median i clienti migliorati e
+peggiorati rispetto ad all di piu` di AGG_MARGIN_DAYS giorni di errore medio;
+intervallo bootstrap al 90% della differenza di D rispetto ad all (clienti
+ricampionati, BOOT_REPS ripetizioni, seed 42); D con selezione annidata
+leave-one-customer-out (variante con D medio piu` alto sugli altri clienti, a
+parita` vince all) e quante volte e` stata scelta ciascuna variante.
+Salva outputs/date_dev_agg.csv (una riga per cliente).
 --refine: dopo il metodo scelto si applica extensions.refine_date0 sulla serie
 della finestra (solo al metodo scelto); si confronta anche con lo stesso metodo
 senza refine ("raw") e si stampa il conteggio dei motivi.
@@ -36,8 +46,8 @@ from src.eval.score import date_score, find_labels, load_labels  # noqa: E402
 from src.eval.validate import window  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models.extensions import refine_date0  # noqa: E402
-from src.models.date import (daily_midday_ratio, estimate, estimate_v1, estimate_v2,  # noqa: E402
-                             estimate_v3, estimate_v4)
+from src.models.date import (AGG_VARIANTS, daily_midday_ratio, estimate, estimate_cfg,  # noqa: E402
+                             estimate_v1, estimate_v2, estimate_v3, estimate_v4)
 
 SEED = 42
 WINDOW_DAYS = 730
@@ -76,6 +86,70 @@ def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, metho
         rows.append(row)
     return rows
 
+AGG_MARGIN_DAYS = 5   # --compare-agg: migliorato/peggiorato se l'errore medio cambia di piu` di 5 giorni
+BOOT_REPS = 2000
+BOOT_CI = (5, 95)     # intervallo al 90%
+
+
+def agg_per_customer(daily: pd.DataFrame, true_date) -> dict:
+    """Per ogni variante di estimate_cfg: D del cliente (media delle finestre) ed
+    errore assoluto medio in giorni (NaN se nessuna finestra ha una previsione)."""
+    out = {}
+    for agg in AGG_VARIANTS:
+        rows = evaluate_customer(daily, true_date, method=lambda w, agg=agg: estimate_cfg(w, agg))
+        err = pd.Series([r["err_days"] for r in rows], dtype=float).abs()
+        out[f"D_{agg}"] = float(np.mean([r["score"] for r in rows]))
+        out[f"err_{agg}"] = float(err.mean()) if err.notna().any() else np.nan
+    return out
+
+
+def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS) -> dict:
+    """per_cust: una riga per cliente, colonne D_<agg> ed err_<agg>. -> dict con
+    D medio per variante, migliorati/peggiorati e intervallo bootstrap rispetto ad
+    "all", D della selezione annidata leave-one-customer-out e scelte per variante."""
+    D = per_cust[[f"D_{a}" for a in AGG_VARIANTS]].to_numpy(float)
+    n = len(D)
+    res = {"mean": {a: float(D[:, i].mean()) for i, a in enumerate(AGG_VARIANTS)}}
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, n, size=(reps, n))  # stessi ricampionamenti per tutte le varianti
+    for i, a in enumerate(AGG_VARIANTS[1:], start=1):
+        diff_err = per_cust[f"err_{a}"] - per_cust["err_all"]
+        diff = D[:, i] - D[:, 0]
+        boot = diff[idx].mean(axis=1)
+        res[a] = {"better": int((diff_err < -AGG_MARGIN_DAYS).sum()), "worse": int((diff_err > AGG_MARGIN_DAYS).sum()),
+                  "diff": float(diff.mean()), "ci": tuple(float(q) for q in np.percentile(boot, BOOT_CI))}
+    chosen, nested = [], []
+    for j in range(n):
+        others = np.delete(D, j, axis=0).mean(axis=0)
+        k = int(np.argmax(others))  # argmax tiene il primo massimo: a parita` vince "all"
+        chosen.append(AGG_VARIANTS[k])
+        nested.append(D[j, k])
+    res["nested"] = float(np.mean(nested))
+    res["chosen"] = {a: chosen.count(a) for a in AGG_VARIANTS}
+    return res
+
+
+def run_compare_agg(pos_lab: pd.DataFrame, groups: dict, out: str) -> int:
+    rows = []
+    for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
+        if cid not in groups:  # come nel protocollo principale: D = 0
+            rows.append({"customer_id": cid, **{f"D_{a}": 0.0 for a in AGG_VARIANTS},
+                         **{f"err_{a}": np.nan for a in AGG_VARIANTS}})
+            continue
+        rows.append({"customer_id": cid, **agg_per_customer(daily_midday_ratio(groups[cid]), true_date)})
+    per_cust = pd.DataFrame(rows)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    per_cust.to_csv(out, index=False)
+    r = compare_agg(per_cust)
+    print(f"Clienti: {len(per_cust)}; D medio: " + ", ".join(f"{a} {v:.3f}" for a, v in r["mean"].items()))
+    for a in AGG_VARIANTS[1:]:
+        lo, hi = r[a]["ci"]
+        print(f"{a} vs all: migliorati {r[a]['better']}, peggiorati {r[a]['worse']} (> {AGG_MARGIN_DAYS} gg); "
+              f"diff D {r[a]['diff']:+.3f}, IC 90% [{lo:+.3f}, {hi:+.3f}]")
+    print(f"Selezione annidata LOCO: D {r['nested']:.3f}; scelte: "
+          + ", ".join(f"{a} {c}" for a, c in r["chosen"].items()))
+    return 0
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -84,6 +158,7 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="default outputs/date_dev_<metodo>.csv")
     ap.add_argument("--method", choices=sorted(METHODS), default=DEFAULT_METHOD)
     ap.add_argument("--refine", action="store_true", help="applica refine_date0 dopo il metodo")
+    ap.add_argument("--compare-agg", action="store_true", help="confronto di estimate_cfg: all, weekdays, weekly_median")
     a = ap.parse_args()
     np.random.seed(SEED)
     out = a.out or f"outputs/date_dev_{a.method}{'_refine' if a.refine else ''}.csv"
@@ -93,6 +168,8 @@ def main() -> int:
     pos_lab = lab[lab["pv_installed"] & lab["pv_installation_date"].notna()]
     series = load_series(a.series, customers=pos_lab["customer_id"].tolist())
     groups = dict(tuple(series.groupby("customer_id", sort=False)))
+    if a.compare_agg:
+        return run_compare_agg(pos_lab, groups, a.out or "outputs/date_dev_agg.csv")
 
     rows = []
     for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):

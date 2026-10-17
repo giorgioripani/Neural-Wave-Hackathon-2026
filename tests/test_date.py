@@ -297,3 +297,90 @@ def test_run_date_dev_v4_compares_with_v2_only():
     from src.models.run_date_dev import COMPARE, DEFAULT_METHOD, METHODS
     assert DEFAULT_METHOD == "v2" and "v4" in METHODS
     assert COMPARE["v4"] == ["v2"] and COMPARE["v2"] == ["v1", "v3"]
+
+
+# --- estimate_cfg: aggregazione dei giorni ---
+
+def _weekend_series(install_day=300, days=730, seed=42):
+    """SINTETICA, UTC: notte 0,2 kWh; mezzogiorno 0,4 kWh nei feriali e 0,05 nel fine
+    settimana (casa vuota), con rumore; dal giorno install_day mezzogiorno x 0,6."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range("2023-01-02", periods=days * 96, freq="15min", tz="UTC")  # lunedi`
+    day = np.arange(len(idx)) // 96
+    mid = (idx.hour >= 10) & (idx.hour < 13)
+    weekend = idx.dayofweek >= 5
+    level = np.where(weekend, 0.05, 0.4) * np.where(day >= install_day, 0.6, 1.0)
+    kwh = np.where(mid, level, 0.2) + 0.03 * rng.standard_normal(len(idx))
+    return pd.DataFrame({"ts_epoch": idx.astype("int64") // 10**9, "kwh": np.clip(kwh, 0, None)})
+
+
+def test_cfg_all_identical_to_v2(synth):
+    from src.models.date import estimate_cfg, estimate_v2
+    series, _ = synth
+    cases = [daily_midday_ratio(series[series["customer_id"] == c]) for c in series["customer_id"].unique()]
+    cases += [_daily_steps([(200, -0.5)]).iloc[::3], _daily_steps([])]  # con buchi e senza gradino
+    for daily in cases:
+        assert estimate_cfg(daily, "all") == estimate_v2(daily)
+    assert estimate_cfg(cases[0]) == estimate_v2(cases[0])  # default "all"
+
+
+def test_cfg_calendar_core_matches_v2_on_complete_days():
+    from src.models.date import _step_regression_calendar, estimate_v2
+    for daily in (_daily_steps([(200, -0.5)]), _daily_steps([(45, -0.6)]), _daily_steps([])):
+        d = daily.assign(date=pd.to_datetime(daily["date"]))
+        assert _step_regression_calendar(d, d["date"].iloc[0].strftime("%Y-%m-%d")) == estimate_v2(daily)
+
+
+def test_cfg_weekdays_finds_date_with_low_weekends():
+    from src.models.date import estimate_cfg
+    daily = daily_midday_ratio(_weekend_series())
+    true = pd.Timestamp("2023-01-02") + pd.Timedelta(days=300)
+    assert abs((pd.Timestamp(estimate_cfg(daily, "weekdays")) - true).days) <= 3
+    wk = pd.Timestamp(estimate_cfg(daily, "weekly_median"))
+    assert wk.dayofweek == 0 and abs((wk - true).days) <= 7
+
+
+def test_cfg_weekly_median_drops_short_weeks():
+    from src.models.date import _weekly_median
+    d = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=14, freq="D"), "midday_ratio": np.arange(14.0)})
+    d = d.drop(index=[7, 8, 9, 10])  # seconda settimana: 3 giorni validi
+    w = _weekly_median(d)
+    assert list(w["date"]) == [pd.Timestamp("2024-01-01")] and w["midday_ratio"].iloc[0] == 3.0
+
+
+def test_cfg_no_step_returns_first_day_and_bad_agg():
+    from src.models.date import estimate_cfg
+    daily = _daily_steps([])
+    # domenica: primo giorno di daily, non del filtro. Solo weekdays: con ~104 righe
+    # settimanali la regola del 5% si supera piu` facilmente sul rumore (limite noto).
+    assert estimate_cfg(daily, "weekdays") == "2023-01-01"
+    flat = daily.assign(midday_ratio=1.0)
+    assert estimate_cfg(flat, "weekly_median") == "2023-01-01"
+    with pytest.raises(ValueError):
+        estimate_cfg(daily, "mensile")
+
+
+def test_compare_agg_stats():
+    from src.models.run_date_dev import compare_agg
+    per = pd.DataFrame({"D_all": [0.5, 0.5, 0.5, 0.5], "D_weekdays": [0.9, 0.9, 0.9, 0.1],
+                        "D_weekly_median": [0.5, 0.5, 0.5, 0.5],
+                        "err_all": [20, 20, 20, 20], "err_weekdays": [5, 5, 14, 40],
+                        "err_weekly_median": [20, 20, 20, np.nan]})
+    r = compare_agg(per, reps=500)
+    assert r["mean"]["weekdays"] == pytest.approx(0.7)
+    assert (r["weekdays"]["better"], r["weekdays"]["worse"]) == (3, 1)  # 6 gg in meno conta, 15 in piu` conta
+    lo, hi = r["weekdays"]["ci"]
+    assert lo <= r["weekdays"]["diff"] <= hi and lo >= -0.4 and hi <= 0.4
+    assert r["weekly_median"]["ci"] == (0.0, 0.0) and r["weekly_median"]["better"] == 0
+    # LOCO: senza il cliente 4 weekdays vince (0,9 > 0,5); senza uno dei primi tre la media
+    # degli altri e` (0,9 + 0,9 + 0,1) / 3 = 0,633 > 0,5: sempre weekdays
+    assert r["chosen"] == {"all": 0, "weekdays": 4, "weekly_median": 0}
+    assert r["nested"] == pytest.approx(0.7)
+
+
+def test_compare_agg_tie_goes_to_all():
+    from src.models.run_date_dev import compare_agg
+    per = pd.DataFrame({f"D_{a}": [0.4, 0.6] for a in ("all", "weekdays", "weekly_median")}
+                       | {f"err_{a}": [10, 10] for a in ("all", "weekdays", "weekly_median")})
+    r = compare_agg(per, reps=10)
+    assert r["chosen"] == {"all": 2, "weekdays": 0, "weekly_median": 0}
