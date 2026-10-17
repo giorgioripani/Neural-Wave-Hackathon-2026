@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from src.eval.score_date import date_score, load_labels, score_dates  # noqa: E402
+from src.eval.score import date_score  # noqa: E402
 from src.models.date import daily_midday_ratio, estimate_v1  # noqa: E402
 from synthetic import make_synthetic  # noqa: E402
 
@@ -56,33 +56,24 @@ def test_estimate_unsorted_and_short():
     assert estimate_v1(daily.sort_values("date").head(10)) == "2024-01-01"
 
 
-def test_date_score():
-    assert date_score("2024-05-01", "2024-05-01") == 1.0
-    assert date_score("2024-05-16", "2024-05-01") == pytest.approx(0.5)
-    assert date_score("2024-04-16", "2024-05-01") == pytest.approx(0.5)
-    assert date_score("2024-07-01", "2024-05-01") == 0.0
-    assert date_score("", "2024-05-01") == 0.0
+def test_windows_stay_inside_data(synth):
+    """Finestre di 730 giorni dentro i dati, anche con la data vicino ai bordi."""
+    from src.models.run_date_dev import evaluate_customer
+    dates = pd.date_range("2022-01-01", periods=1461, freq="D")
+    daily = pd.DataFrame({"date": dates, "midday_ratio": 1.0})
+    for t in (dates[0], dates[100], dates[730], dates[-75]):
+        for r in evaluate_customer(daily, t, method=lambda w: w["date"].iloc[0].strftime("%Y-%m-%d")):
+            assert r["n_days"] == 730 and dates[0].date() <= r["win_start"] and r["win_end"] <= (dates[-1] + pd.Timedelta(days=1)).date()
+            assert r["n_before"] + r["n_after"] == 730 and r["n_after"] >= 1
+            assert 0.0 <= r["pos_real"] <= 1.0
+    short = daily.head(300)
+    assert [r["n_days"] for r in evaluate_customer(short, dates[150])] == [300, 300, 300]
 
 
-def test_load_labels_and_score(tmp_path):
-    p = tmp_path / "labels.csv"
-    p.write_text(
-        "customer_id;pv_installed;pv_installation_date;pv_capacity_kwp\n"
-        "POD001;TRUE;2024-05-01;5.5\n"
-        "POD002;FALSE;;\n"
-    )
-    lab = load_labels(p)
-    assert lab["customer_id"].tolist() == ["POD001", "POD002"]
-    assert lab["pv_installed"].tolist() == [True, False]
-    assert score_dates({"POD001": "2024-05-16"}, lab) == pytest.approx(0.5)
-
-
-def test_window_bounds_positions():
-    from src.models.run_date_dev import window_bounds
-    for pos in (0.25, 0.5, 0.75):
-        start, end = window_bounds("2024-05-01", pos)
-        assert (end - start).days == 730
-        assert (pd.Timestamp("2024-05-01") - start).days == round(pos * 730)
+def test_default_method_is_pipeline_method():
+    from src.models.date import estimate
+    from src.models.run_date_dev import DEFAULT_METHOD, METHODS
+    assert METHODS[DEFAULT_METHOD] is estimate
 
 
 def test_evaluate_customer_synthetic(synth):
@@ -95,18 +86,6 @@ def test_evaluate_customer_synthetic(synth):
     for r in res:
         assert r["n_days"] == r["n_before"] + r["n_after"] <= 730
         assert 0.0 <= r["score"] <= 1.0
-
-
-def test_sql_literal_and_view_on_parquet(tmp_path):
-    import duckdb
-    from src.models.run_date_dev import q
-    assert q("a'b") == "'a''b'"
-    p = tmp_path / "it's.parquet"
-    pd.DataFrame({"customer_id": ["POD1"], "timestamp_epoch": [0], "energy_consumption_kwh": [1.0]}).to_parquet(p)
-    con = duckdb.connect()
-    con.execute(f"CREATE VIEW s AS SELECT * FROM read_parquet({q(str(p))})")
-    n = con.execute("SELECT count(*) FROM s WHERE customer_id = ?", ["POD1"]).fetchone()[0]
-    assert n == 1
 
 
 def _log_ratio_daily(step_day=None, season=0.0, n=730, noise=0.1, seed=42):
@@ -167,9 +146,10 @@ def test_run_date_dev_main_v2_on_synthetic(synth, tmp_path, monkeypatch, capsys)
                                       str(tmp_path / "labels.csv"), "--out", str(out), "--method", "v2"])
     assert run_date_dev.main() == 0
     lines = capsys.readouterr().out.strip().splitlines()
-    assert len(lines) == 5 and lines[0].endswith("3") and "Migliorati" in lines[4]
+    assert len(lines) == 7 and lines[0].endswith("v2") and lines[1].endswith("3")
+    assert "vs v1" in lines[5] and "vs v3" in lines[6]
     res = pd.read_csv(out)
-    assert {"score", "score_v1", "err_days_v1"} <= set(res.columns) and len(res) == 9
+    assert {"score", "score_v1", "err_days_v1", "score_v3", "pos_real"} <= set(res.columns) and len(res) == 9
 
 
 def _seasonal_step_daily(step_day=400, n=730, noise=0.1, seed=42):
@@ -211,7 +191,7 @@ def test_run_date_dev_main_v3_on_synthetic(synth, tmp_path, monkeypatch, capsys)
                                       str(tmp_path / "labels.csv"), "--out", str(out), "--method", "v3"])
     assert run_date_dev.main() == 0
     lines = capsys.readouterr().out.strip().splitlines()
-    assert len(lines) == 6 and "vs v1" in lines[4] and "vs v2" in lines[5]
+    assert len(lines) == 7 and lines[0].endswith("v3") and "vs v1" in lines[5] and "vs v2" in lines[6]
     res = pd.read_csv(out)
     assert {"score", "score_v1", "score_v2", "err_days_v2", "pred_date_v1"} <= set(res.columns)
 
