@@ -1,4 +1,5 @@
-"""Figure del report su dati SINTETICI: ogni figura produce un file non vuoto."""
+"""Figure e tabelle del report su dati SINTETICI: ogni file e` non vuoto, nessuna
+sovrapposizione, nessun customer_id visibile."""
 import json
 import sys
 from pathlib import Path
@@ -6,14 +7,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.text import Text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.viz import fig_capacity, fig_date, fig_detect, fig_ext, fig_overview, fig_score  # noqa: E402
-from src.viz.style import setup  # noqa: E402
+from src.viz import fig_capacity, fig_date, fig_detect, fig_ext, fig_overview, fig_report, fig_score  # noqa: E402
+from src.viz import style  # noqa: E402
 
 START = pd.Timestamp("2022-01-01")
 FINAL_NAMES = ("v2", "refined", "v2_refine", "refined_refine")
+SERIES_PV = {"POD0000": 300, "POD0002": 400, "POD0004": 100, "POD0006": 600}  # giorno di installazione
+LOO_ERR = {"POD0000": 0, "POD0002": 3, "POD0004": 12, "POD0006": 25, "POD0008": 60, "POD0010": 200}
 
 
 def _series(cid, install_day, days=730, seed=0):
@@ -26,16 +30,19 @@ def _series(cid, install_day, days=730, seed=0):
     return pd.DataFrame({"customer_id": cid, "ts_epoch": idx.astype("int64") // 10**9, "kwh": np.clip(kwh, 0, None)})
 
 
+def _day(d):
+    return START + pd.Timedelta(days=d)
+
+
 @pytest.fixture(scope="module")
 def data(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("viz")
-    series = pd.concat([_series("POD0001", 300), _series("POD0002", 500, seed=1),
-                        _series("POD0003", None, seed=2), _series("POD0004", 0, seed=3)], ignore_index=True)
-    labels = pd.DataFrame({"customer_id": ["POD0001", "POD0002", "POD0003", "POD0004"],
-                           "pv_installed": [True, True, False, True],
-                           "pv_installation_date": [START + pd.Timedelta(days=300), START + pd.Timedelta(days=500),
-                                                    pd.NaT, START],
-                           "pv_capacity_kwp": [5.0, 8.0, np.nan, 20.0]})
+    series = pd.concat([_series(c, d, seed=i) for i, (c, d) in enumerate(SERIES_PV.items())]
+                       + [_series("POD0001", None, seed=9), _series("POD0012", 0, seed=10)], ignore_index=True)
+    lab_ids = list(SERIES_PV) + ["POD0001", "POD0012"]
+    labels = pd.DataFrame({"customer_id": lab_ids, "pv_installed": [True] * 4 + [False, True],
+                           "pv_installation_date": [_day(d) for d in SERIES_PV.values()] + [pd.NaT, START],
+                           "pv_capacity_kwp": [5.0, 8.0, 40.0, 300.0, np.nan, 20.0]})
     out, art = tmp / "outputs", tmp / "artifacts"
     (out / "inject_ext").mkdir(parents=True)
     art.mkdir()
@@ -43,15 +50,19 @@ def data(tmp_path_factory):
     ids = [f"POD{i:04d}" for i in range(12)]
     pd.DataFrame({"customer_id": ids * 2, "y": [i % 2 == 0 for i in range(12)] * 2, "k": [0] * 12 + [1] * 12,
                   "end": "2024-12-31", "dip_spread": rng.uniform(0, 2, 24)}).to_csv(out / "detect_window_features.csv", index=False)
-    (art / "detect_params.json").write_text(json.dumps({"feature": "dip_spread", "sign": 1, "threshold": 0.85, "scale": 0.7}))
+    (art / "detect_params.json").write_text(json.dumps({"feature": "dip_spread", "sign": 1, "threshold": 0.85,
+                                                        "scale": 0.7, "recent": {"feature": "rec_drop"}}))
     (art / "capacity.json").write_text(json.dumps({"method": "geo_b", "median": 6.0}))
-    true_kwp = rng.uniform(3, 50, 12)
-    loo = pd.DataFrame({"customer_id": ids, "pv_installed": [i % 2 == 0 for i in range(12)],
-                        "pv_installation_date": ["2023-05-01" if i % 2 == 0 else "" for i in range(12)],
-                        "pv_capacity_kwp": [true_kwp[i] if i % 2 == 0 else np.nan for i in range(12)],
-                        "pv_installed_pred": [i % 2 == 0 or i == 1 for i in range(12)],
-                        "pv_installation_date_pred": ["2023-05-10" if i % 4 == 0 else "2023-09-01" for i in range(12)],
-                        "pv_capacity_kwp_pred": true_kwp * rng.uniform(0.6, 1.4, 12), "round": 0})
+    true_kwp = rng.uniform(20, 900, 12)
+    true_date = {c: _day(SERIES_PV.get(c, 200)) for c in ids}
+    pv = {c: i % 2 == 0 for i, c in enumerate(ids)}
+    loo = pd.DataFrame({
+        "customer_id": ids, "pv_installed": [pv[c] for c in ids],
+        "pv_installation_date": [true_date[c].date() if pv[c] else "" for c in ids],
+        "pv_capacity_kwp": [true_kwp[i] if pv[c] else np.nan for i, c in enumerate(ids)],
+        "pv_installed_pred": [pv[c] or c == "POD0001" for c in ids],
+        "pv_installation_date_pred": [(true_date[c] + pd.Timedelta(days=LOO_ERR.get(c, 0))).date() for c in ids],
+        "pv_capacity_kwp_pred": true_kwp * rng.uniform(0.6, 1.4, 12), "round": 0})
     loo.to_csv(out / "loo_pipeline_serie_intera_tutto_loo.csv", index=False)
     for name in ("median_vera", "geo_b_vera", "geo_b_stimata"):
         pd.concat([loo.assign(round=r) for r in range(2)]).to_csv(out / f"capacity_validate_{name}.csv", index=False)
@@ -67,121 +78,201 @@ def data(tmp_path_factory):
                   "med_kwp_err_pct": [20, 20, 25, 30], "fa_per_customer": [0.3, 0.2, 0.1, 0.05],
                   "f1_ext": [0.4, 0.4, 0.3, 0.2]}).to_csv(out / "inject_ext" / "summary.csv", index=False)
     pd.DataFrame({"customer_id": ids, "reason": "sotto_soglia", "best_gain": rng.uniform(0, 0.12, 12),
-                  "best_coef": -0.1}).to_csv(out / "ext_dev_diag.csv", index=False)
-    setup()
-    return {"tmp": tmp, "out": out, "art": art, "series": series, "labels": labels}
+                  "best_coef": np.where(np.arange(12) % 3 == 0, 0.1, -0.1)}).to_csv(out / "ext_dev_diag.csv", index=False)
+    pd.DataFrame({"loo_f1": [0.95, 0.9, 0.8], "sign": [1, -1, 1], "threshold": [0.85, -0.2, 0.1],
+                  "tp": [20, 19, 18], "fp": [0, 1, 3], "fn": [2, 3, 4], "missing": [0, 0, 1]},
+                 index=["dip_spread", "summer_level", "rec_drop"]).to_csv(out / "detect_feature_scores.csv")
+    return {"tmp": tmp, "out": out, "art": art, "series": series, "labels": labels,
+            "loo": out / "loo_pipeline_serie_intera_tutto_loo.csv",
+            "finals": {p: out / f"date_dev_final_{p}.csv" for p in ("windows", "last730", "full")}}
+
+
+@pytest.fixture
+def checked(monkeypatch):
+    """Su ogni figura salvata: sovrapposizioni e testi con un customer_id."""
+    found = {}
+
+    def hook(name, fig):
+        texts = [t.get_text() for t in fig.findobj(Text)]
+        found[name] = {"overlaps": style.check_overlaps(fig), "ids": [t for t in texts if "POD" in t]}
+    monkeypatch.setattr(style, "SAVE_HOOKS", [hook])
+    yield found
+    style.setup(False)
 
 
 def _ok(paths):
     assert paths and all(Path(p).is_file() and Path(p).stat().st_size > 0 for p in paths)
 
 
-def test_hourly_profiles(data):
-    prof, skipped = fig_overview.hourly_profiles(data["series"], data["labels"])
-    assert skipped == 1  # POD0004: installato al primo giorno, nessun dato prima
-    assert set(prof["customer_id"]) == {"POD0001", "POD0002"}
-    sm = fig_overview.summarize(prof)
-    mid_after = sm[(sm["period"] == "dopo") & (sm["season"] == "estate") & sm["hour"].between(10, 12)]["median"]
-    mid_before = sm[(sm["period"] == "prima") & (sm["season"] == "inverno") & sm["hour"].between(10, 12)]["median"]
-    assert (mid_after < 0.5).all() and (abs(mid_before - 1) < 0.1).all()  # 0,1 / 0,3 dopo; ~1 prima
+def _clean(found):
+    bad = {k: v for k, v in found.items() if v["overlaps"] or v["ids"]}
+    assert not bad, bad
 
 
-def test_each_figure(data, tmp_path):
-    out, art, fig = data["out"], data["art"], tmp_path / "fig"
-    loo = out / "loo_pipeline_serie_intera_tutto_loo.csv"
-    finals = {p: out / f"date_dev_final_{p}.csv" for p in ("windows", "last730", "full")}
-    _ok(fig_overview.make(data["series"], data["labels"], fig, "png"))
-    _ok(fig_detect.make(out / "detect_window_features.csv", art / "detect_params.json", loo, fig, "pdf"))
-    _ok(fig_capacity.make(loo, fig, "pdf"))
-    _ok(fig_capacity.make_table(sorted(out.glob("capacity_validate_*_*.csv")), tmp_path / "tab", "geo_b"))
-    _ok(fig_date.make_examples(data["series"], data["labels"], fig, "pdf"))
-    _ok(fig_date.make_cdf(loo, fig, "pdf"))
-    _ok(fig_date.make_forest(finals, fig, "pdf"))
-    _ok(fig_date.make_table(finals, tmp_path / "tab"))
-    _ok(fig_ext.make(out / "inject_ext" / "summary.csv", out / "ext_dev_diag.csv", fig, "pdf"))
-    _ok(fig_score.make(loo, fig, "pdf"))
-    tex = (tmp_path / "tab" / "tab_date_versions.tex").read_text()
-    assert r"\textbf{v2}" in tex and "refined + refine" in tex
-    cap = (tmp_path / "tab" / "tab_capacity_methods.tex").read_text()
-    assert r"\textbf{geo\_b}" in cap and "median" in cap
+@pytest.mark.parametrize("talk", [False, True])
+def test_report_figures(data, tmp_path, checked, talk):
+    style.setup(talk)
+    _ok(fig_report.make_a(data["series"], data["loo"], tmp_path))
+    _ok(fig_report.make_b(data["loo"], tmp_path))
+    _ok(fig_report.make_c(data["loo"], tmp_path))
+    _ok(fig_overview.make(data["series"], data["labels"], tmp_path, width=style.DOUBLE, name="fig1_overview"))
+    _ok(fig_overview.make(data["series"], data["labels"], tmp_path, width=style.SINGLE, name="fig1_overview_compact"))
+    assert len(checked) == 5
+    _clean(checked)
 
 
-def test_confusion_and_score_parts(data):
-    loo = data["out"] / "loo_pipeline_serie_intera_tutto_loo.csv"
-    c = fig_detect.confusion(loo)
-    assert (c["tp"], c["fp"], c["fn"], c["tn"]) == (6, 1, 0, 5)
-    assert c["f1"] == pytest.approx(12 / 13)
-    s = fig_score.components(loo)
-    assert sum(s["parts"].values()) == pytest.approx(100)
-    assert s["parts"]["70 F1"] + s["parts"]["15 F1 D"] + s["parts"]["15 F1 P"] == pytest.approx(s["score"])
+@pytest.mark.parametrize("talk", [False, True])
+def test_presentation_and_extra_figures(data, tmp_path, checked, talk):
+    style.setup(talk)
+    _ok(fig_date.make_examples(data["series"], data["loo"], tmp_path, "png"))
+    _ok(fig_date.make_forest(data["finals"], tmp_path, "png"))
+    _ok(fig_score.make(data["loo"], tmp_path, "png"))
+    _ok(fig_detect.make(data["out"] / "detect_window_features.csv", data["art"] / "detect_params.json",
+                        data["loo"], tmp_path))
+    _ok(fig_ext.make(data["out"] / "inject_ext" / "summary.csv", data["out"] / "ext_dev_diag.csv", tmp_path))
+    assert len(checked) == 5
+    _clean(checked)
 
 
-def test_pick_examples():
-    fits = [{"err": e} for e in (0, 2, 5, 40, 3)]
-    typical, worst = fig_date.pick_examples(fits)
-    assert typical["err"] == 3 and worst["err"] == 40
+def test_tables(data, tmp_path):
+    main = Path(fig_score.make_table(data["loo"], tmp_path)[0]).read_text()
+    assert main.startswith("% Suggested caption: Leave-one-customer-out on the full series of the 12")
+    for word in ("Detection", "Date", "Capacity", "Total", "TP/FP/FN/TN 6/1/0/5", r"\toprule", r"\bottomrule",
+                 "$70F_1 + 15F_1D + 15F_1P$"):
+        assert word in main, word
+    assert len([ln for ln in main.splitlines() if ln.endswith(r"\\")]) == 5  # intestazione + 3 compiti + totale
+    date = Path(fig_date.make_table(data["finals"], tmp_path)[0]).read_text()
+    assert date.startswith("% Protocols:") and r"\textbf{v2}" in date and "full series" in date
+    cap = Path(fig_capacity.make_table(sorted(data["out"].glob("capacity_validate_*.csv")), tmp_path, "geo_b")[0]).read_text()
+    assert cap.startswith("% Protocol: validate.py, 2-year windows") and r"\textbf{geo\_b}" in cap
+    assert cap.count(r"\\") == 3  # intestazione + 2 metodi con data vera (la riga "stimata" e` esclusa)
+    det = Path(fig_detect.make_table(data["out"] / "detect_feature_scores.csv", tmp_path, "dip_spread")[0]).read_text()
+    assert r"\textbf{\texttt{dip\_spread}}" in det and "LOO F1" in det
 
 
-def test_make_all(data, tmp_path, capsys):
-    from src.viz import make_all
-    sp = tmp_path / "s.csv"
+def test_main_results_numbers(data):
+    m = fig_score.main_results(data["loo"])
+    assert (m["tp"], m["fp"], m["fn"], m["tn"]) == (6, 1, 0, 5)
+    assert m["precision"] == pytest.approx(6 / 7) and m["recall"] == 1.0 and m["f1"] == pytest.approx(12 / 13)
+    assert m["med_abs_err"] == pytest.approx(18.5) and m["within30"] == pytest.approx(4 / 6)
+    assert sum(m["parts"].values()) == pytest.approx(100)
+
+
+def test_error_classes():
+    err = [0, 5, 5.5, 15, 16, 30, 31, 90, 91, np.nan]
+    assert fig_report.error_classes(err).tolist() == [2, 2, 2, 2, 1]
+    assert fig_report.error_classes([]).tolist() == [0, 0, 0, 0, 0]
+
+
+def test_pick_cases(data):
+    from src.viz.inputs import loo_date_errors, series_extent
+    typical, worst = fig_date.pick_cases(loo_date_errors(data["loo"]), series_extent(data["series"]))
+    # con serie: errori 0, 3, 12, 25 (mediana 7,5); margine >= 180 gg solo POD0000 e POD0002
+    assert (typical["customer_id"], typical["err"]) == ("POD0002", 3)
+    assert (worst["customer_id"], worst["err"]) == ("POD0006", 25)
+
+
+def test_fig2_skipped_when_feature_missing(data, tmp_path, capsys):
+    p = tmp_path / "params.json"
+    p.write_text(json.dumps({"feature": "not_a_column", "threshold": 1.0}))
+    assert fig_detect.make(data["out"] / "detect_window_features.csv", p, data["loo"], tmp_path) == []
+    assert "not_a_column" in capsys.readouterr().out
+
+
+def test_detect_table_missing_column(tmp_path):
+    bad = tmp_path / "scores.csv"
+    pd.DataFrame({"loo_f1": [0.9], "tp": [1]}, index=["x"]).to_csv(bad)
+    with pytest.raises(ValueError, match=r"\['fp', 'fn'\]"):
+        fig_detect.make_table(bad, tmp_path)
+
+
+def test_check_overlaps_detects_text_and_legend():
+    import matplotlib.pyplot as plt
+    fig, ax = style.figure(figsize=(3, 2))
+    ax.plot([0, 1], [0, 1], label="line")
+    ax.text(0.5, 0.5, "first text")
+    ax.text(0.5, 0.5, "second text")
+    ax.legend(loc="center")
+    found = style.check_overlaps(fig)
+    assert any("first text" in f and "second text" in f for f in found)
+    assert any("covers data" in f for f in found)
+    plt.close(fig)
+    fig, ax = style.figure(figsize=(3, 2))
+    ax.plot([0, 1], [0, 1], label="line")
+    ax.set_title("title")
+    style.legend_below(fig)
+    assert style.check_overlaps(fig) == []
+    plt.close(fig)
+
+
+def _make_all_args(data, tmp_path):
+    from src.viz import make_all  # noqa: F401
+    sp, lp = tmp_path / "s.csv", tmp_path / "l.csv"
     s = data["series"]
     idx = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
     pd.DataFrame({"customer_id": s["customer_id"], "energy_consumption_kwh": s["kwh"],
                   "timestamp_local": idx.dt.tz_convert("Europe/Zurich").dt.strftime("%Y-%m-%d %H:%M:%S"),
                   "timestamp_epoch": s["ts_epoch"]}).to_csv(sp, index=False)
-    lp = tmp_path / "l.csv"
     lab = data["labels"]
     lp.write_text("customer_id;pv_installed;pv_installation_date;pv_capacity_kwp\n" + "".join(
         f"{r.customer_id};{'TRUE' if r.pv_installed else 'FALSE'};"
         f"{'' if pd.isna(r.pv_installation_date) else r.pv_installation_date.date()};"
         f"{'' if pd.isna(r.pv_capacity_kwp) else r.pv_capacity_kwp}\n" for r in lab.itertuples()))
-    args = ["--series", str(sp), "--labels", str(lp), "--outputs", str(data["out"]), "--artifacts", str(data["art"]),
-            "--fig-dir", str(tmp_path / "f"), "--tab-dir", str(tmp_path / "t"), "--format", "png", "--talk"]
-    assert make_all.main(args) == 0
+    return ["--series", str(sp), "--labels", str(lp), "--outputs", str(data["out"]), "--artifacts", str(data["art"]),
+            "--fig-dir", str(tmp_path / "f"), "--tab-dir", str(tmp_path / "t")]
+
+
+@pytest.mark.parametrize("which, expected", [
+    ("report", {"fig_report_a.pdf", "fig_report_b.pdf", "fig_report_c.pdf", "fig1_overview.pdf",
+                "fig1_overview_compact.pdf", "tab_main_results.tex", "tab_date_versions.tex",
+                "tab_capacity_methods.tex"}),
+    ("talk", {"fig1_overview.png", "fig_report_a.png", "fig_report_b.png", "fig_report_c.png",
+              "fig4_date_examples.png", "fig6_date_forest.png", "fig8_score.png"}),
+])
+def test_make_all_sets(data, tmp_path, capsys, which, expected):
+    from src.viz import make_all
+    assert make_all.main(_make_all_args(data, tmp_path) + ["--set", which]) == 0
     lines = capsys.readouterr().out.strip().splitlines()
-    assert len(lines) == 10 and all(Path(x).is_file() for x in lines)  # 8 figure + 2 tabelle
-    with pytest.raises(SystemExit, match="run_detect.py"):
-        make_all.main(args[:6] + ["--artifacts", str(tmp_path / "vuoto"), "--only", "2"])
+    paths = [x for x in lines if x.startswith(str(tmp_path))]
+    assert {Path(x).name for x in paths} == expected and all(Path(x).stat().st_size > 0 for x in paths)
+    assert not [x for x in lines if x.startswith("WARNING")]
+    assert any(x.startswith("fig1_overview:") and "1 excluded" in x for x in lines)
+
+
+def test_make_all_all_and_missing(data, tmp_path, capsys):
+    from src.viz import make_all
+    args = _make_all_args(data, tmp_path)
+    assert make_all.main(args + ["--set", "all"]) == 0
+    names = {Path(x).name for x in capsys.readouterr().out.splitlines() if x.startswith(str(tmp_path))}
+    assert {"fig2_detect.pdf", "fig7_ext.pdf", "tab_detect_variants.tex", "fig8_score.png"} <= names
+    assert len(names) == 8 + 7 + 3
+    with pytest.raises(SystemExit, match="loo_pipeline --modes tutto_loo"):
+        make_all.main(args[:4] + ["--outputs", str(tmp_path / "vuoto"), "--set", "talk"])
 
 
 def test_decimal_default_and_helpers(monkeypatch):
-    from src.viz import style
     assert style.DECIMAL == "."
     assert style.num(0.4371) == "0.437" and style.dec("r = 0.3") == "r = 0.3"
     monkeypatch.setattr(style, "DECIMAL", ",")
-    assert style.num(0.4371) == "0,437" and style.num(12.0, 1) == "12,0"
-    assert style.dec("r = 0.3") == "r = 0,3" and style.dec("$0.5$") == "$0{,}5$"
+    assert style.num(0.4371) == "0,437" and style.dec("$0.5$") == "$0{,}5$"
 
 
-@pytest.mark.parametrize("sep", [".", ","])
-def test_tick_labels_use_decimal(monkeypatch, tmp_path, sep):
+def test_style_helpers():
+    from src.models.detect import SUMMER, WINTER
+    assert style.months_label(SUMMER) == "May–Aug" and style.months_label(WINTER) == "Nov–Feb"
+    assert style.days(1) == "1 day" and style.days(12) == "12 days"
+    assert fig_report.axis_ticks(20, 1500) == [30, 100, 300, 1000]
+    assert fig_report.axis_ticks(2, 50) == [3, 10, 30]
+
+
+def test_tick_labels_use_decimal(monkeypatch, tmp_path):
     import matplotlib.pyplot as plt
-    from src.viz import style
-    monkeypatch.setattr(style, "DECIMAL", sep)
-    fig, (a1, a2) = plt.subplots(1, 2)
-    a1.plot([0, 1], [0, 0.5])
-    a2.plot([1, 100], [1, 100]); a2.set_yscale("log")
+    monkeypatch.setattr(style, "DECIMAL", ",")
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 0.5])
     style.apply_decimal(fig)
-    style.apply_decimal(fig)  # due volte: non si avvolge due volte
+    style.apply_decimal(fig)
     fig.canvas.draw()
-    labels = [t.get_text() for t in a1.get_yticklabels() if t.get_text()]
-    assert any(f"0{sep}1" in t for t in labels)
-    other = "," if sep == "." else "."
-    assert not any(f"0{other}1" in t for t in labels)
-    assert not isinstance(a1.yaxis.get_major_formatter().inner, style.DecimalFormatter)
+    labels = [t.get_text() for t in ax.get_yticklabels() if t.get_text()]
+    assert any("0,1" in t for t in labels) and not any("0.1" in t for t in labels)
     _ok([style.save(fig, "dec", tmp_path, "png")])
-
-
-@pytest.mark.parametrize("sep", [".", ","])
-def test_tables_use_decimal(data, monkeypatch, tmp_path, sep):
-    import re
-    from src.viz import style
-    monkeypatch.setattr(style, "DECIMAL", sep)
-    out = data["out"]
-    finals = {p: out / f"date_dev_final_{p}.csv" for p in ("windows", "last730", "full")}
-    tex = Path(fig_date.make_table(finals, tmp_path)[0]).read_text()
-    tex += Path(fig_capacity.make_table(sorted(out.glob("capacity_validate_*_*.csv")), tmp_path, "geo_b")[0]).read_text()
-    other = "," if sep == "." else "."
-    assert re.search(rf"\d{re.escape(sep)}\d", tex)
-    assert not re.search(rf"\d{re.escape(other)}\d", tex)

@@ -13,6 +13,7 @@ def required(outputs: Path, artifacts: Path) -> dict:
     outputs, artifacts = Path(outputs), Path(artifacts)
     req = {
         "window_features": (outputs / "detect_window_features.csv", "python src/models/run_detect.py"),
+        "detect_scores": (outputs / "detect_feature_scores.csv", "python src/models/run_detect.py"),
         "detect_params": (artifacts / "detect_params.json", "python src/models/run_detect.py"),
         "loo": (outputs / LOO_NAME, "python -m src.eval.loo_pipeline --modes tutto_loo"),
         "inject_summary": (outputs / "inject_ext" / "summary.csv", "python src/models/inject_ext_dev.py"),
@@ -51,3 +52,21 @@ def true_positives(lab: pd.DataFrame, pred: pd.DataFrame) -> pd.DataFrame:
     """Clienti con FV vero e previsto: date e kWp veri e previsti."""
     m = lab.merge(pred, on="customer_id", suffixes=("", "_pred"))
     return m[m["pv_installed"] & m["pv_installed_pred"]].reset_index(drop=True)
+
+
+def loo_date_errors(loo_path) -> pd.DataFrame:
+    """Veri positivi del primo giro (la serie intera ha un solo giro): customer_id,
+    true, pred (date) ed err (|errore| in giorni, NaN se la data prevista manca)."""
+    lab, pred = read_loo(loo_path)[0]
+    tp = true_positives(lab, pred)
+    p = pd.to_datetime(tp["pv_installation_date_pred"], format="%Y-%m-%d", errors="coerce")
+    return pd.DataFrame({"customer_id": tp["customer_id"], "true": tp["pv_installation_date"], "pred": p,
+                         "err": (p - tp["pv_installation_date"]).dt.days.abs()})
+
+
+def series_extent(series: pd.DataFrame) -> pd.DataFrame:
+    """Primo e ultimo giorno UTC di ogni cliente (customer_id, first, last)."""
+    g = series.groupby("customer_id")["ts_epoch"].agg(["min", "max"])
+    to_day = lambda x: pd.to_datetime(x, unit="s").dt.normalize()  # noqa: E731
+    return pd.DataFrame({"customer_id": g.index, "first": to_day(g["min"]).to_numpy(),
+                         "last": to_day(g["max"]).to_numpy()}).reset_index(drop=True)

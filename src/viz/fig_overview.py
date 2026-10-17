@@ -4,14 +4,12 @@ Aggregazione (solo medie): per ogni cliente con FV e data vera, kWh medi per qua
 d'ora per (prima/dopo, estate/inverno, ora UTC), divisi per i kWh medi per quarto
 d'ora del cliente in tutto il periodo "prima" (= media giornaliera / 96). Poi
 mediana fra i clienti con banda interquartile. Clienti senza dati prima della data
-vera: esclusi (contati nel titolo).
+vera: esclusi (il numero va nelle note per la didascalia).
 """
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-
 from src.models.detect import SUMMER, WINTER
-from src.viz.style import DOUBLE, OKABE_ITO, save
+from src.viz.style import DOUBLE, OKABE_ITO, TEXT, figure, legend_below, months_label, note, save
 
 
 def hourly_profiles(series: pd.DataFrame, labels: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -46,26 +44,31 @@ def summarize(prof: pd.DataFrame) -> pd.DataFrame:
                          "n": g.count()}).reset_index()
 
 
-def make(series, labels, fig_dir, fmt="pdf") -> list:
+def make(series, labels, fig_dir, fmt="pdf", width: float = DOUBLE, name: str = "fig1_overview") -> list:
+    """width DOUBLE (pagina intera) o SINGLE (versione compatta)."""
     prof, skipped = hourly_profiles(series, labels)
     sm = summarize(prof)
     n = prof["customer_id"].nunique()
-    fig, axes = plt.subplots(1, 2, figsize=(DOUBLE, 2.4), sharey=True)
+    compact = width < DOUBLE
+    fig, axes = figure(1, 2, figsize=(width, 2.6 if compact else 2.5), sharey=True)
     colors = {"prima": OKABE_ITO["blue"], "dopo": OKABE_ITO["orange"]}
+    names = {"prima": TEXT["before"], "dopo": TEXT["after"]}
+    sep = "\n" if compact else " "
+    titles = {"estate": f"{TEXT['summer']}{sep}({months_label(SUMMER)})",
+              "inverno": f"{TEXT['winter']}{sep}({months_label(WINTER)})"}
     for ax, season in zip(axes, ("estate", "inverno")):
+        ax.axvspan(10, 13, color="0.9", zorder=0, lw=0, label=TEXT["midday_band"])
         for period in ("prima", "dopo"):
             d = sm[(sm["season"] == season) & (sm["period"] == period)].sort_values("hour")
             if d.empty:
                 continue
-            ax.plot(d["hour"], d["median"], color=colors[period], label=f"{period} dell'installazione")
             ax.fill_between(d["hour"], d["q25"], d["q75"], color=colors[period], alpha=0.2, lw=0)
-        ax.axvspan(10, 13, color="0.9", zorder=0)
-        ax.set_title(season.capitalize())
-        ax.set_xlabel("ora (UTC)")
-        ax.set_xticks(range(0, 24, 3))
+            ax.plot(d["hour"], d["median"], color=colors[period], label=names[period])
+        ax.set_title(titles[season])
+        ax.set_xlabel(TEXT["hour_utc"])
+        ax.set_xticks(range(0, 24, 6 if compact else 3))
         ax.set_xlim(0, 23)
-    axes[0].set_ylabel("consumo / media prima")
-    axes[0].legend(loc="upper left")
-    fig.suptitle(f"Profilo medio giornaliero, mediana e IQR su {n} clienti con FV"
-                 + (f" ({skipped} esclusi: nessun dato prima)" if skipped else ""), y=1.02)
-    return [save(fig, "fig1_overview", fig_dir, fmt)]
+    axes[0].set_ylabel(TEXT["y_profile_short" if compact else "y_profile"])
+    legend_below(fig, ncol=2 if compact else 3)
+    note(name, TEXT["note_overview"].format(n=n, skipped=skipped))
+    return [save(fig, name, fig_dir, fmt)]

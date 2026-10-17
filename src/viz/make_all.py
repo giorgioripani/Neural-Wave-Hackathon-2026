@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
-"""Tutte le figure e le tabelle del report.
+"""Figure e tabelle del report e della presentazione.
 
 Uso (dalla radice del repo):
-    python src/viz/make_all.py [--format pdf|png] [--talk] [--only 1,2,...]
+    python src/viz/make_all.py [--set report|talk|all]
         [--series data/clean/dev.parquet] [--labels ...] [--outputs outputs]
         [--artifacts artifacts] [--fig-dir outputs/figures] [--tab-dir outputs/tables]
+        [--ext-window last730|full]
 
-Legge solo file gia` calcolati dagli script di validazione (outputs/, artifacts/) e,
-per le figure 1 e 4, la serie di sviluppo (solo medie per cliente). Se manca un
-file di input si ferma e dice quale script lo genera. La tabella dei metodi dei kWp
-si salta (con un avviso) se mancano i CSV di train_capacity.py.
-Stampa solo i percorsi dei file creati.
+--set report (default): fig_report_a/b/c, fig1_overview (pagina intera) e
+    fig1_overview_compact, tab_main_results, tab_date_versions, tab_capacity_methods; PDF.
+--set talk: fig1_overview, fig_report_a/b/c, fig4_date_examples, fig6_date_forest,
+    fig8_score; PNG con caratteri grandi (style.setup(talk=True)).
+--set all: report + talk + fig2_detect, fig7_ext e tab_detect_variants (PDF).
+
+Fonte unica dei risultati: outputs/loo_pipeline_serie_intera_tutto_loo.csv
+(python -m src.eval.loo_pipeline --modes tutto_loo). Le figure 1, 4 e fig_report_a
+leggono anche la serie di sviluppo (solo medie per cliente). Se manca un input lo
+script si ferma ed elenca chi lo genera. Stampa i percorsi dei file creati, gli
+avvisi di sovrapposizione (style.check_overlaps) e i clienti esclusi dalla fig. 1.
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -21,70 +29,110 @@ sys.path.insert(0, str(ROOT))
 
 from src.eval.score import find_labels, load_labels  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
-from src.viz import fig_capacity, fig_date, fig_detect, fig_ext, fig_overview, fig_score  # noqa: E402
+from src.viz import fig_capacity, fig_date, fig_detect, fig_ext, fig_overview, fig_report, fig_score  # noqa: E402
+from src.viz import style  # noqa: E402
 from src.viz.inputs import PROTOCOLS, missing, required  # noqa: E402
-from src.viz.style import setup  # noqa: E402
+from src.viz.style import DOUBLE, SINGLE, check_overlaps, setup  # noqa: E402
 
-NEEDS = {1: ["series"], 2: ["window_features", "detect_params", "loo"], 3: ["loo"], 4: ["series"], 5: ["loo"],
-         6: [f"date_final_{p}" for p in PROTOCOLS], 7: ["inject_summary", "ext_diag"], 8: ["loo"]}
+DATE_FINALS = [f"date_final_{p}" for p in PROTOCOLS]
+NEEDS = {
+    "report": ["series", "loo", "capacity_csv", *DATE_FINALS],
+    "talk": ["series", "loo", *DATE_FINALS],
+    "extra": ["window_features", "detect_params", "detect_scores", "loo", "inject_summary", "ext_diag"],
+}
+SETS = {"report": ["report"], "talk": ["talk"], "all": ["report", "talk", "extra"]}
+
+
+def capacity_csvs(outputs) -> list:
+    return sorted(Path(outputs).glob("capacity_validate_*_vera.csv"))
+
+
+def run_report(p, series, labels, a, fig_dir, tab_dir) -> list:
+    made = fig_report.make_a(series, p["loo"], fig_dir, "pdf")
+    made += fig_report.make_b(p["loo"], fig_dir, "pdf")
+    made += fig_report.make_c(p["loo"], fig_dir, "pdf")
+    made += fig_overview.make(series, labels, fig_dir, "pdf", width=DOUBLE, name="fig1_overview")
+    made += fig_overview.make(series, labels, fig_dir, "pdf", width=SINGLE, name="fig1_overview_compact")
+    made += fig_score.make_table(p["loo"], tab_dir)
+    made += fig_date.make_table({proto: p[f"date_final_{proto}"] for proto in PROTOCOLS}, tab_dir)
+    made += fig_capacity.make_table(capacity_csvs(a.outputs), tab_dir, fig_capacity.chosen_method(a.artifacts))
+    return made
+
+
+def run_talk(p, series, labels, a, fig_dir, tab_dir) -> list:
+    made = fig_overview.make(series, labels, fig_dir, "png", width=DOUBLE, name="fig1_overview")
+    made += fig_report.make_a(series, p["loo"], fig_dir, "png")
+    made += fig_report.make_b(p["loo"], fig_dir, "png")
+    made += fig_report.make_c(p["loo"], fig_dir, "png")
+    made += fig_date.make_examples(series, p["loo"], fig_dir, "png")
+    made += fig_date.make_forest({proto: p[f"date_final_{proto}"] for proto in PROTOCOLS}, fig_dir, "png")
+    made += fig_score.make(p["loo"], fig_dir, "png")
+    return made
+
+
+def run_extra(p, series, labels, a, fig_dir, tab_dir) -> list:
+    made = fig_detect.make(p["window_features"], p["detect_params"], p["loo"], fig_dir, "pdf")
+    feat = json.loads(Path(p["detect_params"]).read_text(encoding="utf-8")).get("feature")
+    try:
+        made += fig_detect.make_table(p["detect_scores"], tab_dir, feat)
+    except ValueError as e:  # colonna mancante: si dice quale, non si inventa
+        print(e)
+    made += fig_ext.make(p["inject_summary"], p["ext_diag"], fig_dir, "pdf", protocol=a.ext_window)
+    return made
+
+
+RUNNERS = {"report": (run_report, False), "talk": (run_talk, True), "extra": (run_extra, False)}
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--format", choices=["pdf", "png"], default="pdf")
-    ap.add_argument("--talk", action="store_true", help="caratteri piu` grandi (slide)")
-    ap.add_argument("--only", default=None, help="figure da fare, es. 2,3,8 (default tutte)")
+    ap.add_argument("--set", choices=sorted(SETS), default="report", dest="which")
     ap.add_argument("--series", default=str(ROOT / "data" / "clean" / "dev.parquet"))
     ap.add_argument("--labels", default=None)
     ap.add_argument("--outputs", default=str(ROOT / "outputs"))
     ap.add_argument("--artifacts", default=str(ROOT / "artifacts"))
     ap.add_argument("--fig-dir", default=None, help="default <outputs>/figures")
     ap.add_argument("--tab-dir", default=None, help="default <outputs>/tables")
+    ap.add_argument("--ext-window", default="last730", choices=["last730", "full"],
+                    help="--window usato per ext_dev_diag.csv (run_ext_dev.py), solo per il titolo della fig. 7")
     a = ap.parse_args(argv)
-    figs = sorted(NEEDS) if a.only is None else sorted(int(x) for x in a.only.split(","))
     fig_dir = Path(a.fig_dir or Path(a.outputs) / "figures")
     tab_dir = Path(a.tab_dir or Path(a.outputs) / "tables")
+
     req = required(a.outputs, a.artifacts)
     req["series"] = (Path(a.series), "python src/loading/prepare_data.py <csv> data/clean/dev.parquet")
-    keys = sorted({k for f in figs for k in NEEDS[f]})
-    miss = missing(req, keys)
+    groups = SETS[a.which]
+    keys = sorted({k for g in groups for k in NEEDS[g]})
+    miss = missing(req, [k for k in keys if k != "capacity_csv"])
+    if "capacity_csv" in keys and not capacity_csvs(a.outputs):
+        miss.append(f"manca {Path(a.outputs) / 'capacity_validate_<metodo>_vera.csv'}: generalo con "
+                    "`python src/models/train_capacity.py --no-save`")
     if miss:
         sys.exit("\n".join(miss))
-    setup(a.talk)
-    fmt, p = a.format, {k: v[0] for k, v in req.items()}
+    p = {k: v[0] for k, v in req.items()}
 
     series = labels = None
-    if {1, 4} & set(figs):
+    if "series" in keys:
         labels = load_labels(find_labels(a.labels))
         pos = labels.loc[labels["pv_installed"], "customer_id"].tolist()
         series = load_series(p["series"], customers=pos)
-    made = []
-    if 1 in figs:
-        made += fig_overview.make(series, labels, fig_dir, fmt)
-    if 2 in figs:
-        made += fig_detect.make(p["window_features"], p["detect_params"], p["loo"], fig_dir, fmt)
-    if 3 in figs:
-        made += fig_capacity.make(p["loo"], fig_dir, fmt)
-        cap_csv = sorted(Path(a.outputs).glob("capacity_validate_*_*.csv"))
-        if cap_csv:
-            made += fig_capacity.make_table(cap_csv, tab_dir, fig_capacity.chosen_method(a.artifacts))
-        else:
-            print(f"tab_capacity_methods.tex saltata: nessun {Path(a.outputs) / 'capacity_validate_*_*.csv'} "
-                  "(generali con `python src/models/train_capacity.py --no-save`)")
-    if 4 in figs:
-        made += fig_date.make_examples(series, labels, fig_dir, fmt)
-    if 5 in figs:
-        made += fig_date.make_cdf(p["loo"], fig_dir, fmt)
-    if 6 in figs:
-        finals = {proto: p[f"date_final_{proto}"] for proto in PROTOCOLS}
-        made += fig_date.make_forest(finals, fig_dir, fmt)
-        made += fig_date.make_table(finals, tab_dir)
-    if 7 in figs:
-        made += fig_ext.make(p["inject_summary"], p["ext_diag"], fig_dir, fmt)
-    if 8 in figs:
-        made += fig_score.make(p["loo"], fig_dir, fmt)
+
+    made, warnings = [], []
+    style.NOTES.clear()
+    style.SAVE_HOOKS[:] = [lambda name, fig: warnings.extend(f"WARNING {name}: overlap {d}" for d in check_overlaps(fig))]
+    try:
+        for g in groups:
+            runner, talk = RUNNERS[g]
+            setup(talk)
+            made += runner(p, series, labels, a, fig_dir, tab_dir)
+    finally:
+        style.SAVE_HOOKS.clear()
     for path in made:
         print(path)
+    for w in warnings:
+        print(w)
+    for name, text in dict(style.NOTES).items():  # fig. 1: clienti esclusi (per la didascalia)
+        print(f"{name}: {text}")
     return 0
 
 
