@@ -37,6 +37,7 @@ def check_packages() -> list[str]:
 
 MISSING_PACKAGES = check_packages()
 
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
@@ -72,26 +73,43 @@ def sniff_sep(path: Path) -> str:
     return max(counts, key=counts.get)
 
 
+def _to_number(s: pd.Series) -> pd.Series:
+    """Testo -> float; virgola decimale accettata; valore illeggibile -> NaN."""
+    return pd.to_numeric(s.str.strip().str.replace(",", ".", regex=False), errors="coerce")
+
+
 def read_test(path: Path) -> pd.DataFrame:
     """CSV del test -> customer_id (str), ts_epoch (int), kwh (float), ts_local (str).
 
     Tiene anche i nomi originali (energy_consumption_kwh, timestamp_epoch) cosi`
-    ogni modulo trova le colonne che si aspetta.
+    ogni modulo trova le colonne che si aspetta. Tutte le colonne sono lette come
+    testo (gli zeri iniziali di customer_id restano anche con intestazioni sporche).
+    Righe senza timestamp_epoch valido: tolte (non si sa dove metterle), ma il
+    cliente resta in df.attrs["customer_ids"] e avra` comunque la sua riga.
+    Righe ripetute (stesso cliente e stesso epoch): si tiene la prima, come load_series.
     """
     sep = sniff_sep(path)
-    df = pd.read_csv(path, sep=sep, encoding="utf-8-sig",
-                     dtype={"customer_id": str, "timestamp_local": str})
+    df = pd.read_csv(path, sep=sep, encoding="utf-8-sig", dtype=str)
     df.columns = [c.strip() for c in df.columns]
-    kwh = df["energy_consumption_kwh"]
-    if kwh.dtype == object:  # decimale con la virgola
-        kwh = pd.to_numeric(kwh.str.replace(",", ".", regex=False), errors="coerce")
+    df["customer_id"] = df["customer_id"].str.strip().replace("", float("nan"))
+    ids = df["customer_id"].dropna().unique().tolist()
     # Regola del team: kWh negativi (errori di misura) -> 0; righe tenute, NaN lasciati NaN.
-    df["energy_consumption_kwh"] = kwh.astype(float).clip(lower=0)
-    df["customer_id"] = df["customer_id"].str.strip()
-    df = df.sort_values(["customer_id", "timestamp_epoch"], kind="stable").reset_index(drop=True)
+    df["energy_consumption_kwh"] = _to_number(df["energy_consumption_kwh"]).clip(lower=0)
+    epoch = _to_number(df["timestamp_epoch"])
+    bad = ~np.isfinite(epoch)
+    if bad.any():
+        print(f"ATTENZIONE: {int(bad.sum())} righe senza timestamp_epoch valido, tolte")
+    df = df[~bad].assign(timestamp_epoch=epoch[~bad].astype("int64"))
+    df = df.sort_values(["customer_id", "timestamp_epoch"], kind="stable")
+    n_dup = int(df.duplicated(["customer_id", "timestamp_epoch"]).sum())
+    if n_dup:
+        print(f"ATTENZIONE: {n_dup} righe ripetute (stesso cliente e stesso epoch), tenuta la prima")
+        df = df.drop_duplicates(["customer_id", "timestamp_epoch"], keep="first")
+    df = df.reset_index(drop=True)
     df["kwh"] = df["energy_consumption_kwh"]
-    df["ts_epoch"] = df["timestamp_epoch"].astype("int64")
-    df["ts_local"] = df.get("timestamp_local", "")
+    df["ts_epoch"] = df["timestamp_epoch"]
+    df["ts_local"] = df["timestamp_local"] if "timestamp_local" in df.columns else ""
+    df.attrs["customer_ids"] = ids
     print(f"Letto {path.name}: separatore {sep!r}, {len(df)} righe")
     return df
 
@@ -126,15 +144,17 @@ def call_detect(mod, df: pd.DataFrame) -> dict:
 def call_date(mod, series: pd.DataFrame) -> str:
     """date.estimate(daily_midday_ratio(serie del cliente)) -> 'AAAA-MM-GG'."""
     daily = mod.daily_midday_ratio(series) if hasattr(mod, "daily_midday_ratio") else series
-    out = str(mod.estimate(daily))
-    pd.Timestamp(out)  # valida il formato
-    return out[:10]
+    out = mod.estimate(daily)
+    ts = pd.Timestamp(out)  # valida il formato
+    if pd.isna(ts):  # NaT o None: si usa la riserva, mai "NaT" nel file
+        raise ValueError(f"data non valida: {out!r}")
+    return ts.strftime("%Y-%m-%d")
 
 
 def call_capacity(mod, series: pd.DataFrame, date: str) -> float:
     """capacity.estimate(serie del cliente, data) -> kWp."""
     kwp = float(mod.estimate(series, date))
-    if not (kwp > 0):
+    if not (kwp > 0 and np.isfinite(kwp)):
         raise ValueError(f"kWp non valido: {kwp}")
     return kwp
 
@@ -163,7 +183,11 @@ def predict_all(df: pd.DataFrame, used: dict | None = None) -> list[dict]:
     hanno usato la riserva di detect, date e capacity."""
     used = {} if used is None else used
     used.update(detect=0, date=0, capacity=0)
-    customers = df["customer_id"].dropna().unique().tolist()
+    present = df["customer_id"].dropna().unique().tolist()
+    # Clienti del file senza nessuna riga utilizzabile (vedi read_test): riga FALSE.
+    seen = set(present)
+    no_data = [c for c in df.attrs.get("customer_ids", []) if c not in seen]
+    customers = present + no_data
     detect, date_mod, capacity = load_module("detect"), load_module("date"), load_module("capacity")
 
     # Riserva di detect: TRUE per tutti (sul dev "tutti TRUE" vale 57,8 punti, "tutti FALSE" 0).
@@ -210,6 +234,10 @@ def predict_all(df: pd.DataFrame, used: dict | None = None) -> list[dict]:
             row["pv_installation_date"] = date
             row["pv_capacity_kwp"] = round(kwp, 2)
         rows.append(row)
+    if no_data:
+        print(f"ATTENZIONE: {len(no_data)} clienti senza misure con epoch valido, messi FALSE")
+    rows += [{"customer_id": c, "pv_installed": False, "pv_installation_date": "", "pv_capacity_kwp": ""}
+             for c in no_data]
     assert len(rows) == len(customers)
     return rows
 

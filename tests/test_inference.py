@@ -230,3 +230,75 @@ def test_extensions_output_format(tmp_path, monkeypatch):
         cid, date, kwp = line.split(";")
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", date)
         assert re.fullmatch(r"\d+(\.\d{1,2})?", kwp) and float(kwp) > 0
+
+
+# --- Robustezza della lettura del test (fix/bug-fixes) ----------------------
+
+def _run(tmp_path, df, sep=";"):
+    src = tmp_path / "test.csv"
+    df.to_csv(src, sep=sep, index=False)
+    res = subprocess.run([sys.executable, str(ROOT / "inference.py"), str(src)],
+                         cwd=tmp_path, capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    lines = (tmp_path / "predictions.csv").read_text(encoding="utf-8").splitlines()
+    return res, {line.split(";")[0]: line.split(";") for line in lines[1:]}
+
+
+def test_epoch_missing_rows_dropped_customer_kept(tmp_path):
+    series, _ = make_synthetic(n_customers=2, days=250)
+    series["timestamp_epoch"] = series["timestamp_epoch"].astype(float)
+    series.loc[5, "timestamp_epoch"] = float("nan")  # una riga senza epoch
+    lost = series.iloc[:10].assign(customer_id="NOEPOCH", timestamp_epoch=float("nan"))
+    res, rows = _run(tmp_path, pd.concat([series, lost]))
+    assert set(rows) == set(series["customer_id"]) | {"NOEPOCH"}
+    assert rows["NOEPOCH"][1:] == ["FALSE", "", ""]
+    assert "senza timestamp_epoch valido, tolte" in res.stdout
+
+
+def test_header_with_spaces_keeps_leading_zeros(tmp_path):
+    series, _ = make_synthetic(n_customers=2, days=250)
+    series["customer_id"] = series["customer_id"].str.replace("POD", "00", regex=False)  # solo cifre
+    series.columns = [f" {c} " for c in series.columns]
+    _, rows = _run(tmp_path, series)
+    assert set(rows) == {"000000", "000001"}
+
+
+def test_read_test_drops_duplicates(tmp_path):
+    import inference
+    series, _ = make_synthetic(n_customers=2, days=250)
+    src = tmp_path / "test.csv"
+    pd.concat([series, series.iloc[:100]]).to_csv(src, sep=",", index=False)
+    df = inference.read_test(src)
+    assert len(df) == len(series)
+    assert not df.duplicated(["customer_id", "ts_epoch"]).any()
+    assert df["ts_epoch"].dtype == "int64" and df["kwh"].dtype == float
+    assert df.attrs["customer_ids"] == sorted(series["customer_id"].unique())
+
+
+def test_call_date_rejects_nat_and_normalizes():
+    import inference
+
+    class Fake:
+        def __init__(self, out):
+            self.out = out
+
+        def estimate(self, daily):
+            return self.out
+
+    series = pd.DataFrame({"kwh": [0.1], "ts_epoch": [0]})
+    assert inference.call_date(Fake("2024-5-1"), series) == "2024-05-01"
+    for bad in (pd.NaT, None, "NaT"):
+        with pytest.raises(ValueError):
+            inference.call_date(Fake(bad), series)
+
+
+def test_call_capacity_rejects_inf():
+    import inference
+
+    class Fake:
+        @staticmethod
+        def estimate(series, date):
+            return float("inf")
+
+    with pytest.raises(ValueError):
+        inference.call_capacity(Fake, pd.DataFrame(), "2024-01-01")
