@@ -19,6 +19,8 @@ NIGHT_UTC_HOURS = (0, 4)
 EPS_KWH = 1e-3        # evita divisioni per zero nelle notti a consumo nullo
 MIN_SEGMENT_DAYS = 30  # ogni segmento del change point dura almeno 30 giorni
 SEED = 42
+INTERVALS_PER_HOUR = 4  # misure a 15 minuti
+MAX_MISSING_FRAC = 0.25  # giorno scartato se manca piu` del 25% di una finestra
 
 
 def daily_midday_ratio(series: pd.DataFrame) -> pd.DataFrame:
@@ -26,19 +28,29 @@ def daily_midday_ratio(series: pd.DataFrame) -> pd.DataFrame:
 
     Accetta le colonne del dataset (energy_consumption_kwh, timestamp_epoch) o
     quelle di load_series (kwh, ts_epoch). Non assume 96 righe al giorno.
+    Mezzogiorno e notte sono la MEDIA degli intervalli presenti (NaN ignorati).
+    Il giorno e` scartato se in una delle due finestre manca piu` di
+    MAX_MISSING_FRAC degli intervalli attesi (NaN o timestamp assenti).
     """
     kwh_col = "kwh" if "kwh" in series.columns else "energy_consumption_kwh"
     ts_col = "ts_epoch" if "ts_epoch" in series.columns else "timestamp_epoch"
     ts = pd.to_datetime(series[ts_col].astype("int64"), unit="s", utc=True)
-    kwh = series[kwh_col].astype(float).clip(lower=0).fillna(0.0)  # kWh negativi -> 0
+    kwh = series[kwh_col].astype(float).clip(lower=0)  # kWh negativi -> 0, NaN restano NaN
     hour = ts.dt.hour
     df = pd.DataFrame({
         "date": ts.dt.date,
-        "mid": kwh.where((hour >= MIDDAY_UTC_HOURS[0]) & (hour < MIDDAY_UTC_HOURS[1]), 0.0),
-        "night": kwh.where((hour >= NIGHT_UTC_HOURS[0]) & (hour < NIGHT_UTC_HOURS[1]), 0.0),
+        "mid": kwh.where((hour >= MIDDAY_UTC_HOURS[0]) & (hour < MIDDAY_UTC_HOURS[1])),
+        "night": kwh.where((hour >= NIGHT_UTC_HOURS[0]) & (hour < NIGHT_UTC_HOURS[1])),
     })
-    g = df.groupby("date", sort=True)[["mid", "night"]].sum()
-    out = pd.DataFrame({"date": g.index, "midday_ratio": (g["mid"] + EPS_KWH) / (g["night"] + EPS_KWH)})
+    g = df.groupby("date", sort=True).agg(
+        mid=("mid", "mean"), night=("night", "mean"), n_mid=("mid", "count"), n_night=("night", "count"))
+    exp_mid = INTERVALS_PER_HOUR * (MIDDAY_UTC_HOURS[1] - MIDDAY_UTC_HOURS[0])
+    exp_night = INTERVALS_PER_HOUR * (NIGHT_UTC_HOURS[1] - NIGHT_UTC_HOURS[0])
+    g = g[(g["n_mid"] >= (1 - MAX_MISSING_FRAC) * exp_mid) & (g["n_night"] >= (1 - MAX_MISSING_FRAC) * exp_night)]
+    # EPS diviso per gli intervalli attesi: senza buchi il log del rapporto e` quello
+    # della versione a somme, piu` la costante log(exp_night / exp_mid).
+    ratio = (g["mid"] + EPS_KWH / exp_mid) / (g["night"] + EPS_KWH / exp_night)
+    out = pd.DataFrame({"date": g.index, "midday_ratio": ratio})
     return out.reset_index(drop=True)
 
 

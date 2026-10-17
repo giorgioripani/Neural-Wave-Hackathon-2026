@@ -226,3 +226,54 @@ def test_estimate_from_series_synthetic(synth):
         pred = estimate_from_series(df)
         assert pred == estimate_v2(daily_midday_ratio(one))
         assert date_score(pred, row["pv_installation_date"]) > 0.9
+
+
+def test_midday_gaps_no_false_step(synth):
+    """Buchi a mezzogiorno nella seconda meta` (cliente senza PV): niente falso gradino.
+    Buchi grandi (6/12 intervalli, NaN e righe tolte) -> giorno scartato;
+    buchi piccoli (2/12, <= 25%) -> giorno tenuto, la media non cambia livello."""
+    from src.models.date import estimate_v2
+    series, labels = synth
+    cid = labels.loc[~labels["pv_installed"], "customer_id"].iloc[0]
+    one = series[series["customer_id"] == cid].reset_index(drop=True)
+    ts = pd.to_datetime(one["timestamp_epoch"], unit="s", utc=True)
+    second_half = (ts - ts.iloc[0]).dt.days >= 365
+    first_day = ts.iloc[0].strftime("%Y-%m-%d")
+    clean = daily_midday_ratio(one)
+
+    big_nan = second_half & (ts.dt.hour == 10) | second_half & (ts.dt.hour == 11) & (ts.dt.minute < 30)
+    big_drop = second_half & (ts.dt.hour == 12) & (ts.dt.minute >= 30) | second_half & (ts.dt.hour == 11) & (ts.dt.minute >= 30)
+    big = one.copy()
+    big.loc[big_nan, "energy_consumption_kwh"] = np.nan
+    big = big[~big_drop]
+    d_big = daily_midday_ratio(big)
+    assert len(d_big) == 365
+    assert estimate_v2(d_big) == first_day
+
+    small_nan = second_half & (ts.dt.hour == 10) & (ts.dt.minute == 0)
+    small_drop = second_half & (ts.dt.hour == 12) & (ts.dt.minute == 45)
+    small = one.copy()
+    small.loc[small_nan, "energy_consumption_kwh"] = np.nan
+    small = small[~small_drop]
+    d_small = daily_midday_ratio(small)
+    assert len(d_small) == 730
+    assert estimate_v2(d_small) == first_day
+    lvl = lambda d: np.log(d["midday_ratio"].to_numpy()[365:]).mean()  # noqa: E731
+    assert abs(lvl(d_small) - lvl(clean)) < 0.02
+
+
+def test_no_gaps_same_as_sum_version_up_to_constant(synth):
+    """Senza buchi, log(midday_ratio) a medie = vecchia versione a somme + costante."""
+    from src.models.date import EPS_KWH, MIDDAY_UTC_HOURS, NIGHT_UTC_HOURS
+    series, _ = synth
+    one = series[series["customer_id"] == "POD0000"]
+    ts = pd.to_datetime(one["timestamp_epoch"], unit="s", utc=True)
+    hour, kwh = ts.dt.hour, one["energy_consumption_kwh"].clip(lower=0)
+    mid = kwh.where((hour >= MIDDAY_UTC_HOURS[0]) & (hour < MIDDAY_UTC_HOURS[1]), 0.0)
+    night = kwh.where((hour >= NIGHT_UTC_HOURS[0]) & (hour < NIGHT_UTC_HOURS[1]), 0.0)
+    g = pd.DataFrame({"date": ts.dt.date, "mid": mid, "night": night}).groupby("date").sum()
+    old = np.log((g["mid"] + EPS_KWH) / (g["night"] + EPS_KWH)).to_numpy()
+    new = np.log(daily_midday_ratio(one)["midday_ratio"].to_numpy())
+    assert len(new) == len(old)
+    diff = new - old
+    assert np.ptp(diff) < 1e-9
