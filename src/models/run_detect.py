@@ -1,7 +1,7 @@
 # ============================================================
 # FILE: src/models/run_detect.py      (owner: Flavio)
 # Train + validate Task 1. Run ONCE before submission, never from inference.py.
-# Input:  data/clean/dev.parquet, data/raw/pv_labels_dev.csv
+# Input:  data/clean/dev.parquet, data/pv_labels_dev.csv
 # Output: artifacts/detect_params.json        (read by src/models/detect.py)
 #         outputs/detect_window_features.csv  (features per 2-year window)
 #         outputs/detect_feature_scores.csv   (LOO F1 per feature)
@@ -25,11 +25,11 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from src.eval.score_date import load_labels  # noqa: E402
+from src.eval.score import load_labels  # noqa: E402
 from src.models import detect  # noqa: E402
 
 SERIES = ROOT / "data" / "clean" / "dev.parquet"
-LABELS = ROOT / "data" / "raw" / "pv_labels_dev.csv"
+LABELS = ROOT / "data" / "pv_labels_dev.csv"
 OUT_WINDOWS = ROOT / "outputs" / "detect_window_features.csv"
 OUT_SCORES = ROOT / "outputs" / "detect_feature_scores.csv"
 WINDOW_DAYS = 730

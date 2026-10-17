@@ -50,6 +50,9 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | --- | --- | --- | --- | --- | --- |
 | 17/10 | 066bc37, baseline (sempre TRUE, data a metà finestra, kWp mediano) | 0,710 | 0,045 | 0,415 | 54,58 ± 0,41 |
 | 17/10 | ebe5364, pipeline intera (detect + date + capacity) su fake_test, IN-SAMPLE (ottimistico, non LOO) | 0,952 | 0,372 | 0,448 | 78,38 |
+| 17/10 | 45d6f80 (main 9858eb4), pipeline intera LOO con artefatti attuali (detect e capacity calcolati anche sul cliente lasciato fuori: OTTIMISTA), `python -m src.eval.loo_pipeline` | 0,922 | 0,608 | 0,452 | 79,19 ± 2,92 |
+| 17/10 | 45d6f80, pipeline intera LOO, soglie detect ricalcolate senza il cliente lasciato fuori, capacity da artefatto | 0,909 | 0,608 | 0,452 | 78,10 ± 2,42 |
+| 17/10 | 45d6f80, pipeline intera LOO, detect E capacity (geo_b) ricalcolati senza il cliente lasciato fuori: NUMERO PER IL REPORT | 0,909 | 0,608 | 0,439 | 77,93 ± 2,42 |
 | 17/10 | 09e9ce2, estensioni su fake_test, IN-SAMPLE: 3 previste, 1 vera (TP 0, FP 3, FN 1), F1_ext 0, bonus 0 (con 10 x F1_ext, formula non ufficiale) | - | - | - | 78,38 + 0 |
 
 ## Quota Claude (controllare con /status circa ogni ora)

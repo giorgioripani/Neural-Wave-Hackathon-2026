@@ -118,3 +118,7 @@ run_ext_dev.main() con e senza --refine: con l'opzione si trova l'estensione, i 
 In inject_ext_dev.py le serie originali passano dal refine e date0 non cambia.
 _kwp_ratio: s1 non stimabile con l'installazione al primo giorno; rapporto circa 1,5 con l'installazione visibile.
 Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova ma i suoi kWp sono sempre 1,1 × kwp0. In più kwp0 è stato stimato su date0, che in quel caso è il gradino dell'estensione, quindi probabilmente misura l'estensione e non l'impianto iniziale.
+## 17/10 — Punteggio LOO della pipeline intera (Andrea, con agente Claude)
+Agente usato per scrivere src/eval/loo_pipeline.py: pipeline di inference.py dentro validate.py (2 anni, 5 giri, seed 42).
+Artefatti attuali 79,19 ± 2,92; soglie detect ricalcolate senza il cliente 78,10 ± 2,42; detect e capacity ricalcolati 77,93 ± 2,42 (F1 0,909, D 0,608, P 0,439). La perdita per l'in-sample è piccola (circa 1,3 punti).
+Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo (dip_spread + rec_drop, geo_b), fatta guardando tutti i 40 clienti. Neanche date.py v2 è stato scelto in LOO.
