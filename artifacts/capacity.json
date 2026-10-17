@@ -1,11 +1,29 @@
 {
-  "method": "median",
+  "method": "blend",
+  "base": "b",
+  "mode": "geo",
+  "median": 169.5,
+  "inner": {
+    "method": "b",
+    "feature": "drop_kw",
+    "form": "linear",
+    "a": 107.89442124997822,
+    "b": 1.7038479052543678,
+    "fallback_kwp": 169.5,
+    "kwp_min": 13.5,
+    "kwp_max": 1918.0,
+    "n_train": 22
+  },
   "fallback_kwp": 169.5,
-  "trained_as": "median",
+  "trained_as": "geo_b",
   "validation_P": {
     "median": 0.4149,
     "b": 0.4124,
-    "b_ratio": 0.212,
-    "a": 0.3783
+    "size_night": 0.2856,
+    "size_all": 0.2594,
+    "geo_b": 0.437,
+    "clip_b": 0.37,
+    "geo_size_night": 0.3572,
+    "geo_size_all": 0.3681
   }
 }
