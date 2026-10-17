@@ -50,7 +50,7 @@ def _load(tmp_path, monkeypatch, fake_detect, used=None, **fakes):
     series, _ = make_synthetic(n_customers=4, days=250)
     src = tmp_path / "test.csv"
     series.to_csv(src, sep=";", index=False)
-    df = inference.read_test(src)
+    df, ids = inference.read_test(src)
     real = inference.load_module
     fakes["detect"] = fake_detect
 
@@ -58,7 +58,7 @@ def _load(tmp_path, monkeypatch, fake_detect, used=None, **fakes):
         return fakes[name] if name in fakes else real(name)
 
     monkeypatch.setattr(inference, "load_module", load_module)
-    return inference.predict_all(df, used), sorted(series["customer_id"].unique())
+    return inference.predict_all(df, used, ids), sorted(series["customer_id"].unique())
 
 
 def _assert_pv(row):

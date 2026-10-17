@@ -113,3 +113,101 @@ def daily_features(df: pd.DataFrame) -> pd.DataFrame:
     out["month"] = out["date"].dt.month.astype("int8")
     out["n"] = out["n"].astype("int16")
     return out.replace([np.inf, -np.inf], np.nan)
+
+
+# --- Lettore tollerante per il CSV del test (usato da inference.py) -------------
+
+TEST_REQUIRED = ("customer_id", "timestamp_epoch", "energy_consumption_kwh")
+EPOCH_MS = 1e11  # epoch oltre questo valore: millisecondi
+
+
+def _sniff(line: str) -> str:
+    counts = {s: line.count(s) for s in (";", ",", "\t")}
+    return max(counts, key=counts.get)
+
+
+def _all_line_ids(path: Path, sep: str, pos: int) -> set[str]:
+    """Id di OGNI riga di dati, anche quelle saltate da read_csv (campi in piu`)."""
+    lines = pd.read_csv(path, sep="\x01", header=None, skiprows=1, dtype=str, encoding="utf-8-sig",
+                        keep_default_na=False, quoting=3)[0]
+    ids = lines.str.split(sep).str[pos].fillna("").str.strip().str.strip('"')
+    return set(ids[ids != ""])
+
+
+def load_test(path, verbose: bool = True) -> tuple[pd.DataFrame, list[str]]:
+    """CSV del test -> (df, all_ids). Non solleva errori per un singolo valore sporco.
+
+    df: customer_id (str), energy_consumption_kwh, timestamp_epoch, timestamp_local
+    (nomi del file) e kwh, ts_epoch (int64), ts_local (nomi dell'interfaccia),
+    ordinato per (customer_id, ts_epoch). all_ids: tutti gli id non vuoti del file,
+    PRIMA della pulizia, ordinati: ogni cliente deve avere la sua riga di uscita.
+    Regole: separatore dell'intestazione e dei dati rilevati a parte, BOM tolto,
+    id con trim, epoch non valido o vuoto -> riga tolta, epoch in millisecondi -> /1000,
+    kWh non numerico -> NaN (riga tenuta), virgola decimale accettata, kWh negativi -> 0,
+    righe ripetute (cliente, epoch) -> la prima, righe con campi in piu` saltate.
+    Stampa solo conteggi."""
+    path = Path(path)
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        header = f.readline()
+        first = next((ln for ln in f if ln.strip()), "")
+    head_sep = _sniff(header)
+    data_sep = _sniff(first) if first else head_sep
+    names = [c.strip().strip('"').lower() for c in header.rstrip("\r\n").split(head_sep)]
+    missing = [c for c in TEST_REQUIRED if c not in names]
+    if missing:
+        raise ValueError(f"Colonne mancanti in {path.name}: {missing}")
+    opts = dict(sep=data_sep, header=None, skiprows=1, names=names, encoding="utf-8-sig",
+                skip_blank_lines=True, engine="python" if len(data_sep) > 1 else "c")
+    malformed = False
+    if not first:
+        raw = pd.DataFrame({c: pd.Series(dtype=object) for c in names})
+    else:
+        try:  # via veloce: file pulito, tipi letti da pandas (come il vecchio read_test)
+            raw = pd.read_csv(path, dtype={"customer_id": str, "timestamp_local": str}, **opts)
+        except Exception:  # righe con campi in piu`: tutto come testo, righe malformate saltate
+            raw = pd.read_csv(path, dtype=str, keep_default_na=False, on_bad_lines="skip", **opts)
+            malformed = True
+    if "timestamp_local" not in raw.columns:
+        raw["timestamp_local"] = ""
+    cid = raw["customer_id"].fillna("").astype(str).str.strip()
+    ids = set(cid[cid != ""])
+    if malformed:
+        ids |= _all_line_ids(path, data_sep, names.index("customer_id"))
+    all_ids = sorted(ids)
+
+    def numeric(col: pd.Series, comma: bool = False) -> tuple[pd.Series, int]:
+        """Colonna -> float (NaN se non numerico) e numero di valori non vuoti non convertibili."""
+        if pd.api.types.is_numeric_dtype(col):
+            x = col.astype(float)
+            return x.where(np.isfinite(x)), 0
+        txt = col.fillna("").astype(str).str.strip()
+        if comma:
+            txt = txt.str.replace(",", ".", regex=False)
+        x = pd.to_numeric(txt, errors="coerce").astype(float)
+        x = x.where(np.isfinite(x))
+        return x, int((x.isna() & (txt != "")).sum())
+
+    epoch, _ = numeric(raw["timestamp_epoch"])
+    ms = epoch > EPOCH_MS
+    epoch = epoch.where(~ms, epoch / 1000)
+    kwh, bad_kwh = numeric(raw["energy_consumption_kwh"], comma=True)
+
+    keep = (cid != "") & epoch.notna()
+    df = pd.DataFrame({"customer_id": cid[keep].to_numpy(dtype=object),
+                       "energy_consumption_kwh": kwh[keep].clip(lower=0).to_numpy(float),
+                       "timestamp_local": raw.loc[keep, "timestamp_local"].fillna("").to_numpy(dtype=object),
+                       "timestamp_epoch": epoch[keep].round().astype("int64").to_numpy()})
+    n_dup = int(df.duplicated(["customer_id", "timestamp_epoch"]).sum())
+    df = df.drop_duplicates(["customer_id", "timestamp_epoch"], keep="first")
+    df = df.sort_values(["customer_id", "timestamp_epoch"], kind="stable").reset_index(drop=True)
+    df["kwh"] = df["energy_consumption_kwh"]
+    df["ts_epoch"] = df["timestamp_epoch"]
+    df["ts_local"] = df["timestamp_local"]
+    if verbose:
+        n_empty = len(set(all_ids) - set(df["customer_id"]))
+        print(f"Letto {path.name}: separatore {data_sep!r}, {len(df)} righe, {len(all_ids)} clienti")
+        if (~keep).sum() or n_dup or bad_kwh or ms.sum() or n_empty:
+            print(f"Pulizia: {int((~keep).sum())} righe senza id o epoch valido tolte, {n_dup} ripetute tolte, "
+                  f"{bad_kwh} kWh non numerici -> NaN, {int(ms.sum())} epoch in ms, "
+                  f"{n_empty} clienti senza righe valide")
+    return df, all_ids

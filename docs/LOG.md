@@ -122,3 +122,7 @@ Limite: quando detect dice "pv_gia_presente", la data dell'estensione si trova m
 Agente usato per scrivere src/eval/loo_pipeline.py: pipeline di inference.py dentro validate.py (2 anni, 5 giri, seed 42).
 Artefatti attuali 79,19 ± 2,92; soglie detect ricalcolate senza il cliente 78,10 ± 2,42; detect e capacity ricalcolati 77,93 ± 2,42 (F1 0,909, D 0,608, P 0,439). La perdita per l'in-sample è piccola (circa 1,3 punti).
 Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo (dip_spread + rec_drop, geo_b), fatta guardando tutti i 40 clienti. Neanche date.py v2 è stato scelto in LOO.
+
+## 17/10 — Lettore tollerante del test (Andrea, con agente Claude, richiesta di Flavio)
+Prima: un epoch vuoto o testo in una riga del test faceva fallire tutto inference.py (read_test fuori da ogni try), e un cliente con sole righe non valide spariva dall'output.
+Ora: src.loading.load.load_test (via veloce come il vecchio read_test; se ci sono righe malformate, lettura come testo con le righe saltate), all_ids da tutte le righe del file, rete di sicurezza in main() (tutti TRUE). fake_test: predictions.csv e estensioni identici byte per byte, 19 s contro 17. Test con CSV sintetici in tests/test_load_validate.py.

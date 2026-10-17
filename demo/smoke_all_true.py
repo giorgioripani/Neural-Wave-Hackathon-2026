@@ -39,8 +39,8 @@ def main() -> int:
     failures = Counter()
     inference.warn = lambda what, cid, e: failures.update([what])  # conta le riserve di inference.py
 
-    df = inference.read_test(Path(a.src))
-    rows = inference.predict_all(df)
+    df, ids = inference.read_test(Path(a.src))
+    rows = inference.predict_all(df, customers=ids)
     inference.write_outputs(rows, ext_rows=[], out_dir=out)
     elapsed = time.perf_counter() - t0
 
