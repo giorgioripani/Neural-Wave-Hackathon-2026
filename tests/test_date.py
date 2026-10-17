@@ -384,3 +384,49 @@ def test_compare_agg_tie_goes_to_all():
                        | {f"err_{a}": [10, 10] for a in ("all", "weekdays", "weekly_median")})
     r = compare_agg(per, reps=10)
     assert r["chosen"] == {"all": 2, "weekdays": 0, "weekly_median": 0}
+
+
+# --- estimate_refined ---
+
+def _winter_peak(step_day, seed, days=730, width=40):
+    """SINTETICO: log(midday_ratio) = picco invernale stretto (gaussiano attorno al
+    15 gennaio, NON sinusoidale) + gradino -0,5 al giorno step_day + rumore."""
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2023-01-01", periods=days, freq="D")
+    doy = dates.dayofyear.to_numpy()
+    dist = np.minimum(np.abs(doy - 15), 365 - np.abs(doy - 15))
+    y = 0.8 * np.exp(-(dist / width) ** 2) + np.where(np.arange(days) >= step_day, -0.5, 0.0)
+    y = y + 0.1 * rng.standard_normal(days)
+    return pd.DataFrame({"date": dates.date, "midday_ratio": np.exp(y)})
+
+
+def test_refined_moves_closer_with_non_sinusoidal_season():
+    from src.models.date import estimate_refined, estimate_v2
+    daily, true = _winter_peak(300, seed=2), pd.Timestamp(_day(300))
+    e2 = abs((pd.Timestamp(estimate_v2(daily)) - true).days)
+    er = abs((pd.Timestamp(estimate_refined(daily)) - true).days)
+    assert e2 >= 3 and er < e2
+
+
+def test_refined_no_step_returns_first_day():
+    from src.models.date import estimate_refined, estimate_v2
+    for daily in (_daily_steps([]), _daily_steps([]).assign(midday_ratio=1.0)):
+        assert estimate_v2(daily) == "2023-01-01"
+        assert estimate_refined(daily) == "2023-01-01"
+
+
+def test_refined_stays_within_window_and_estimate_unchanged():
+    from src.models import date as dm
+    daily = _daily_steps([(300, -0.8)])
+    t1, tr = pd.Timestamp(dm.estimate_v2(daily)), pd.Timestamp(dm.estimate_refined(daily, half_window=20))
+    assert abs((tr - t1).days) <= 20
+    assert dm.estimate is dm.estimate_v2
+
+
+def test_compare_refined_variants():
+    from src.models.run_date_dev import REFINED_METHODS, compare_agg
+    assert list(REFINED_METHODS) == ["v2", "refined"]
+    per = pd.DataFrame({"D_v2": [0.5, 0.5], "D_refined": [0.5, 0.5], "err_v2": [10, 10], "err_refined": [3, 20]})
+    r = compare_agg(per, reps=10, variants=REFINED_METHODS)
+    assert r["chosen"] == {"v2": 2, "refined": 0}  # parita`: vince v2
+    assert (r["refined"]["better"], r["refined"]["worse"]) == (1, 1)

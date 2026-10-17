@@ -12,7 +12,7 @@ WINDOW_DAYS si usa tutta la serie. Nessun parametro scelto sui risultati.
 Uso (dalla radice del repo):
     python src/models/run_date_dev.py [--series data/clean/dev.parquet]
         [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3|v4] [--refine]
-        [--compare-agg]
+        [--compare-agg] [--compare-refined]
 
 --method di default: v2, il metodo usato da inference.py (date.estimate).
 v1, v2, v3 si confrontano fra loro; v4 (v2 + secondo gradino) solo con v2.
@@ -25,6 +25,8 @@ ricampionati, BOOT_REPS ripetizioni, seed 42); D con selezione annidata
 leave-one-customer-out (variante con D medio piu` alto sugli altri clienti, a
 parita` vince all) e quante volte e` stata scelta ciascuna variante.
 Salva outputs/date_dev_agg.csv (una riga per cliente).
+--compare-refined: stesse statistiche fra v2 e date.estimate_refined (a parita`
+vince v2); salva outputs/date_dev_refined.csv.
 --refine: dopo il metodo scelto si applica extensions.refine_date0 sulla serie
 della finestra (solo al metodo scelto); si confronta anche con lo stesso metodo
 senza refine ("raw") e si stampa il conteggio dei motivi.
@@ -47,7 +49,7 @@ from src.eval.validate import window  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models.extensions import refine_date0  # noqa: E402
 from src.models.date import (AGG_VARIANTS, daily_midday_ratio, estimate, estimate_cfg,  # noqa: E402
-                             estimate_v1, estimate_v2, estimate_v3, estimate_v4)
+                             estimate_refined, estimate_v1, estimate_v2, estimate_v3, estimate_v4)
 
 SEED = 42
 WINDOW_DAYS = 730
@@ -91,29 +93,41 @@ BOOT_REPS = 2000
 BOOT_CI = (5, 95)     # intervallo al 90%
 
 
-def agg_per_customer(daily: pd.DataFrame, true_date) -> dict:
-    """Per ogni variante di estimate_cfg: D del cliente (media delle finestre) ed
-    errore assoluto medio in giorni (NaN se nessuna finestra ha una previsione)."""
+AGG_METHODS = {a: (lambda w, a=a: estimate_cfg(w, a)) for a in AGG_VARIANTS}
+REFINED_METHODS = {"v2": estimate_v2, "refined": estimate_refined}
+
+
+def methods_per_customer(daily: pd.DataFrame, true_date, methods: dict) -> dict:
+    """Per ogni metodo {nome: funzione daily -> data}: D del cliente (media delle
+    finestre) ed errore assoluto medio in giorni (NaN se nessuna previsione)."""
     out = {}
-    for agg in AGG_VARIANTS:
-        rows = evaluate_customer(daily, true_date, method=lambda w, agg=agg: estimate_cfg(w, agg))
+    for name, fn in methods.items():
+        rows = evaluate_customer(daily, true_date, method=fn)
         err = pd.Series([r["err_days"] for r in rows], dtype=float).abs()
-        out[f"D_{agg}"] = float(np.mean([r["score"] for r in rows]))
-        out[f"err_{agg}"] = float(err.mean()) if err.notna().any() else np.nan
+        out[f"D_{name}"] = float(np.mean([r["score"] for r in rows]))
+        out[f"err_{name}"] = float(err.mean()) if err.notna().any() else np.nan
     return out
 
 
-def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS) -> dict:
-    """per_cust: una riga per cliente, colonne D_<agg> ed err_<agg>. -> dict con
-    D medio per variante, migliorati/peggiorati e intervallo bootstrap rispetto ad
-    "all", D della selezione annidata leave-one-customer-out e scelte per variante."""
-    D = per_cust[[f"D_{a}" for a in AGG_VARIANTS]].to_numpy(float)
+def agg_per_customer(daily: pd.DataFrame, true_date) -> dict:
+    """methods_per_customer con le varianti di estimate_cfg."""
+    return methods_per_customer(daily, true_date, AGG_METHODS)
+
+
+def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS, variants=AGG_VARIANTS) -> dict:
+    """per_cust: una riga per cliente, colonne D_<variante> ed err_<variante>; la
+    prima variante e` il riferimento. -> dict con D medio per variante,
+    migliorati/peggiorati e intervallo bootstrap rispetto al riferimento, D della
+    selezione annidata leave-one-customer-out e scelte per variante."""
+    variants = tuple(variants)
+    ref = variants[0]
+    D = per_cust[[f"D_{a}" for a in variants]].to_numpy(float)
     n = len(D)
-    res = {"mean": {a: float(D[:, i].mean()) for i, a in enumerate(AGG_VARIANTS)}}
+    res = {"mean": {a: float(D[:, i].mean()) for i, a in enumerate(variants)}}
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, n, size=(reps, n))  # stessi ricampionamenti per tutte le varianti
-    for i, a in enumerate(AGG_VARIANTS[1:], start=1):
-        diff_err = per_cust[f"err_{a}"] - per_cust["err_all"]
+    for i, a in enumerate(variants[1:], start=1):
+        diff_err = per_cust[f"err_{a}"] - per_cust[f"err_{ref}"]
         diff = D[:, i] - D[:, 0]
         boot = diff[idx].mean(axis=1)
         res[a] = {"better": int((diff_err < -AGG_MARGIN_DAYS).sum()), "worse": int((diff_err > AGG_MARGIN_DAYS).sum()),
@@ -121,34 +135,40 @@ def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS)
     chosen, nested = [], []
     for j in range(n):
         others = np.delete(D, j, axis=0).mean(axis=0)
-        k = int(np.argmax(others))  # argmax tiene il primo massimo: a parita` vince "all"
-        chosen.append(AGG_VARIANTS[k])
+        k = int(np.argmax(others))  # argmax tiene il primo massimo: a parita` vince il riferimento
+        chosen.append(variants[k])
         nested.append(D[j, k])
     res["nested"] = float(np.mean(nested))
-    res["chosen"] = {a: chosen.count(a) for a in AGG_VARIANTS}
+    res["chosen"] = {a: chosen.count(a) for a in variants}
     return res
 
 
-def run_compare_agg(pos_lab: pd.DataFrame, groups: dict, out: str) -> int:
+def run_compare(pos_lab: pd.DataFrame, groups: dict, out: str, methods: dict) -> int:
+    """Confronto di methods (il primo e` il riferimento) con le statistiche di compare_agg."""
+    names = tuple(methods)
     rows = []
     for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
         if cid not in groups:  # come nel protocollo principale: D = 0
-            rows.append({"customer_id": cid, **{f"D_{a}": 0.0 for a in AGG_VARIANTS},
-                         **{f"err_{a}": np.nan for a in AGG_VARIANTS}})
+            rows.append({"customer_id": cid, **{f"D_{a}": 0.0 for a in names},
+                         **{f"err_{a}": np.nan for a in names}})
             continue
-        rows.append({"customer_id": cid, **agg_per_customer(daily_midday_ratio(groups[cid]), true_date)})
+        rows.append({"customer_id": cid, **methods_per_customer(daily_midday_ratio(groups[cid]), true_date, methods)})
     per_cust = pd.DataFrame(rows)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     per_cust.to_csv(out, index=False)
-    r = compare_agg(per_cust)
+    r = compare_agg(per_cust, variants=names)
     print(f"Clienti: {len(per_cust)}; D medio: " + ", ".join(f"{a} {v:.3f}" for a, v in r["mean"].items()))
-    for a in AGG_VARIANTS[1:]:
+    for a in names[1:]:
         lo, hi = r[a]["ci"]
-        print(f"{a} vs all: migliorati {r[a]['better']}, peggiorati {r[a]['worse']} (> {AGG_MARGIN_DAYS} gg); "
+        print(f"{a} vs {names[0]}: migliorati {r[a]['better']}, peggiorati {r[a]['worse']} (> {AGG_MARGIN_DAYS} gg); "
               f"diff D {r[a]['diff']:+.3f}, IC 90% [{lo:+.3f}, {hi:+.3f}]")
     print(f"Selezione annidata LOCO: D {r['nested']:.3f}; scelte: "
           + ", ".join(f"{a} {c}" for a, c in r["chosen"].items()))
     return 0
+
+
+def run_compare_agg(pos_lab: pd.DataFrame, groups: dict, out: str) -> int:
+    return run_compare(pos_lab, groups, out, AGG_METHODS)
 
 
 def main() -> int:
@@ -159,6 +179,7 @@ def main() -> int:
     ap.add_argument("--method", choices=sorted(METHODS), default=DEFAULT_METHOD)
     ap.add_argument("--refine", action="store_true", help="applica refine_date0 dopo il metodo")
     ap.add_argument("--compare-agg", action="store_true", help="confronto di estimate_cfg: all, weekdays, weekly_median")
+    ap.add_argument("--compare-refined", action="store_true", help="confronto fra v2 ed estimate_refined")
     a = ap.parse_args()
     np.random.seed(SEED)
     out = a.out or f"outputs/date_dev_{a.method}{'_refine' if a.refine else ''}.csv"
@@ -170,6 +191,8 @@ def main() -> int:
     groups = dict(tuple(series.groupby("customer_id", sort=False)))
     if a.compare_agg:
         return run_compare_agg(pos_lab, groups, a.out or "outputs/date_dev_agg.csv")
+    if a.compare_refined:
+        return run_compare(pos_lab, groups, a.out or "outputs/date_dev_refined.csv", REFINED_METHODS)
 
     rows = []
     for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):

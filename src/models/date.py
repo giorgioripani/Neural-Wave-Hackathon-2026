@@ -288,3 +288,41 @@ def estimate_cfg(daily: pd.DataFrame, agg: str = "all") -> str:
     else:
         d = _weekly_median(d)
     return _step_regression_calendar(d, first)
+
+
+REFINE_HALF_WINDOW = 60  # estimate_refined: giorni per lato attorno a t1
+REFINE_MIN_SIDE = 14     # estimate_refined: almeno 14 giorni (righe) per lato
+
+
+def estimate_refined(daily: pd.DataFrame, half_window: int = REFINE_HALF_WINDOW) -> str:
+    """v2 piu` un raffinamento locale della data -> 'AAAA-MM-GG'.
+
+    (1) t1 = estimate_v2(daily); se e` il primo giorno (nessun gradino) si ritorna
+    quello. (2) Giorni entro +-half_window giorni di calendario da t1, log del
+    rapporto tagliato ai quantili 1%-99% calcolati sull'INTERA serie (come la v2).
+    (3) Data che minimizza l'errore quadratico di due livelli costanti (prima/dopo),
+    con almeno REFINE_MIN_SIDE giorni validi per lato. (4) Si accetta solo se il
+    livello dopo e` piu` basso di quello prima; altrimenti t1. Nella finestra
+    locale la stagionalita` non e` modellata: su 4 mesi la si tratta come costante.
+    """
+    t1 = estimate_v2(daily)
+    d, y, _ = _prepare(daily)
+    if y is None or t1 == d["date"].iloc[0].strftime("%Y-%m-%d"):
+        return t1
+    near = ((d["date"] - pd.Timestamp(t1)).dt.days.abs() <= half_window).to_numpy()
+    yl, dl = y[near], d["date"][near].reset_index(drop=True)
+    m = len(yl)
+    if m < 2 * REFINE_MIN_SIDE:
+        return t1
+    c1, c2 = np.cumsum(yl), np.cumsum(yl ** 2)
+    best_k, best_sse, best_drop = None, np.inf, 0.0
+    for k in range(REFINE_MIN_SIDE, m - REFINE_MIN_SIDE + 1):
+        n1, n2 = k, m - k
+        s1, s2 = c1[k - 1], c1[-1] - c1[k - 1]
+        q1, q2 = c2[k - 1], c2[-1] - c2[k - 1]
+        sse = (q1 - s1 ** 2 / n1) + (q2 - s2 ** 2 / n2)
+        if sse < best_sse:
+            best_k, best_sse, best_drop = k, sse, s2 / n2 - s1 / n1
+    if best_k is None or best_drop >= 0:
+        return t1
+    return dl.iloc[best_k].strftime("%Y-%m-%d")
