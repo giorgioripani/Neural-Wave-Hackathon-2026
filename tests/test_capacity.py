@@ -210,6 +210,51 @@ def test_blend_features_union_of_bases():
     assert {"drop_kw", "peak_kw", "night_ref_kw", "all_ref_kw"} <= set(f)
 
 
+def test_blend_b_loglog_base_uses_loglog_form():
+    p = capacity_blend.fit(_fake_table(), "b_loglog", "geo")
+    assert p["inner"]["form"] == "loglog" and p["inner"]["feature"] == "drop_kw"
+
+
+# ----------------------------------------------------------------- data stimata in validazione
+
+def _load_cols(s):
+    return s.rename(columns={"energy_consumption_kwh": "kwh", "timestamp_epoch": "ts_epoch"})
+
+
+def test_make_featurize_true_and_estimated_date():
+    s, lab = make_synthetic(n_customers=1, days=730)
+    s = _load_cols(s)
+    cid, daily, est = train_capacity.make_featurize("vera")(s)
+    assert cid == "POD0000" and est is None and len(daily) == 730
+    _, _, est = train_capacity.make_featurize("stimata")(s)
+    assert est == train_capacity.estimated_date(s)
+    pd.Timestamp(est)  # formato AAAA-MM-GG valido
+    with pytest.raises(ValueError):
+        train_capacity.make_featurize("forse")
+
+
+def test_estimated_date_falls_back_to_first_day(monkeypatch):
+    s, _ = make_synthetic(n_customers=1, days=250)
+    s = _load_cols(s)
+    monkeypatch.setattr(train_capacity.date_mod, "estimate", lambda d: 1 / 0)
+    first = pd.to_datetime(s["ts_epoch"].min(), unit="s", utc=True).strftime("%Y-%m-%d")
+    assert train_capacity.estimated_date(s) == first
+
+
+def test_fit_predict_uses_estimated_date_when_given():
+    s, lab = make_synthetic(n_customers=4, days=730)
+    s = _load_cols(s)
+    lab = lab.assign(pv_installation_date=pd.to_datetime(lab["pv_installation_date"], errors="coerce"))
+    true = dict(zip(lab["customer_id"], lab["pv_installation_date"]))
+    cid = lab.loc[lab["pv_installed"], "customer_id"].iloc[0]
+    feats = {c: train_capacity.featurize(g) for c, g in s.groupby("customer_id")}
+    test_feat = (feats[cid][0], feats[cid][1], "2023-06-15")
+    others = lab[lab["customer_id"] != cid].reset_index(drop=True)
+    p = train_capacity.make_fit_predict("geo_b", true)({c: f for c, f in feats.items() if c != cid},
+                                                       others, test_feat)
+    assert p["pv_installation_date"] == "2023-06-15" and p["pv_capacity_kwp"] > 0
+
+
 # ----------------------------------------------------------------- scelta del metodo
 
 def test_choose_needs_min_gain_over_median():

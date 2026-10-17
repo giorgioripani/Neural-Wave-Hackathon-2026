@@ -5,7 +5,8 @@ prendono piu` clienti sotto il 50% di errore ma sbagliano molto sui casi estremi
 Qui la previsione del modello base viene avvicinata alla mediana:
     "geo"   kWp = sqrt(base x mediana)             media geometrica (= media in scala log)
     "clip"  kWp = base limitato tra 0,5x e 2x la mediana
-Basi: "b" (capacity_b lineare su drop_kw), "size_night" / "size_all" (capacity_size).
+Basi: "b" (capacity_b lineare su drop_kw), "b_loglog" (capacity_b log-log su drop_kw),
+"size_night" / "size_all" (capacity_size).
 Nessun parametro in piu` oltre a quelli del modello base (max 2): la mediana e`
 calcolata in fit, quindi SOLO sui clienti di training.
 """
@@ -22,6 +23,7 @@ from src.models.capacity_common import daily_kw
 NAME = "blend"
 BASES = {
     "b": (capacity_b, capacity_b.fit),
+    "b_loglog": (capacity_b, lambda t: capacity_b.fit(t, "drop_kw", "loglog")),
     "size_night": (capacity_size, lambda t: capacity_size.fit(t, "night_ref_kw")),
     "size_all": (capacity_size, lambda t: capacity_size.fit(t, "all_ref_kw")),
 }
