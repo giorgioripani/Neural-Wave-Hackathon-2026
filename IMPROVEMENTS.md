@@ -94,7 +94,7 @@ def call_detect(mod, df: pd.DataFrame) -> dict:
 - `README.md` ha ancora 5 segnaposto `[...]`: Cosa fa, Metodo e risultati, Limiti, Uso di agenti, Fonti. Li scrivono le persone; i numeri sono in STATUS e qui in P3.
 - `README.md` elenca `src/viz/`, che in `main` non esiste: creare la cartella con i grafici oppure togliere la riga.
 - La riga di Francesco in `STATUS.md` diceva "branch pronto per la PR", ma `francesco/capacity` è già tutto in `main` (aggiornata in questo branch).
-- `DatabaseReadme.md` è la descrizione dei dati scritta da AIL. Prima di rendere pubblico il repo, verificare che si possa pubblicare, altrimenti toglierlo.
+- `DatabaseReadme.md` (descrizione dei dati scritta da AIL) è stato tolto dal repo prima della pubblicazione; resta nella storia git dei commit precedenti.
 - La prova in ambiente pulito resta da fare (domenica alle 7:00). Comandi: quelli del README, poi `python demo/check_env.py` e `python inference.py data/fake_test.csv`.
 
 ### P5. Estensioni (Leonardo). Solo da sapere, nessuna azione consigliata.
