@@ -5,8 +5,8 @@ fine serie, log(midday_ratio) ~ costante + sin/cos annuale + gradino(k), provand
 ogni data candidata k ad almeno MIN_SEGMENT_DAYS giorni dai bordi. Il gradino
 migliore e` un'estensione solo se:
   (a) va verso il basso (mezzogiorno ancora piu` basso, come l'installazione);
-  (b) riduce l'errore quadratico di almeno MIN_SSE_GAIN_EXT rispetto al modello
-      senza gradino (soglia fissata a priori, non scelta sui dati);
+  (b) riduce l'errore quadratico di almeno EXT_THRESHOLD rispetto al modello
+      senza gradino (5%; prima era 10%);
   (c) cade almeno END_MARGIN_DAYS giorni prima della fine della serie.
 Se lo trova, ripete una volta sola da estensione + GAP_DAYS (al massimo max_ext).
 
@@ -23,7 +23,7 @@ from src.models.date import (EPS_KWH, INTERVALS_PER_HOUR, MAX_MISSING_FRAC, MIDD
 
 GAP_DAYS = 60           # si cerca dopo date0 + 60 giorni (e dopo estensione + 60)
 END_MARGIN_DAYS = 60    # estensione ad almeno 60 giorni dalla fine della serie
-MIN_SSE_GAIN_EXT = 0.10  # miglioramento minimo dell'errore quadratico (10%)
+EXT_THRESHOLD = 0.05  # miglioramento minimo dell'errore quadratico (5%)
 KWP_MIN_FACTOR, KWP_MAX_FACTOR = 1.1, 3.0
 
 
@@ -103,7 +103,8 @@ def _kwp_ratio(daily: pd.DataFrame, step_dates: list) -> list:
 
 
 def estimate_extensions(daily: pd.DataFrame, date0: str, kwp0: float, max_ext: int = 2,
-                        min_tail_days: int = 0) -> list[dict]:
+                        min_tail_days: int = 0, threshold: float = EXT_THRESHOLD,
+                        diag: dict | None = None) -> list[dict]:
     """daily: output di daily_midday_ratio (date, midday_ratio), meglio con la colonna
     midday_kwh di daily_ext_features (serve per i kWp). date0: data dell'impianto
     iniziale, kwp0: suoi kWp. -> lista (al massimo max_ext) di dict con date
@@ -111,7 +112,13 @@ def estimate_extensions(daily: pd.DataFrame, date0: str, kwp0: float, max_ext: i
     relativo dell'errore quadratico). Senza midday_kwh, o se i cali non sono
     stimabili, kwp_after = KWP_MIN_FACTOR * kwp0 (o x il kwp precedente).
     min_tail_days: se da date0 + GAP_DAYS all'ultimo giorno restano meno di
-    min_tail_days giorni di calendario, non si cercano estensioni (lista vuota)."""
+    min_tail_days giorni di calendario, non si cercano estensioni (lista vuota).
+    threshold: miglioramento minimo (condizione b), default EXT_THRESHOLD.
+    diag: se e` un dict, vi si scrive l'esito della PRIMA ricerca: reason
+    (dati_vuoti, coda_corta, gradino_su, sotto_soglia, vicino_fine, accettato),
+    best_gain e best_coef del miglior gradino candidato (NaN se non calcolato)."""
+    diag = {} if diag is None else diag
+    diag.update(reason="dati_vuoti", best_gain=np.nan, best_coef=np.nan)
     d = _clean(daily, ["midday_ratio"])
     if d.empty:
         return []
@@ -119,15 +126,29 @@ def estimate_extensions(daily: pd.DataFrame, date0: str, kwp0: float, max_ext: i
     found = []
     start = pd.Timestamp(date0) + pd.Timedelta(days=GAP_DAYS)
     if (last - start).days < min_tail_days:
+        diag["reason"] = "coda_corta"
         return []
     while len(found) < max_ext:
         sub = d[d["date"] >= start].reset_index(drop=True)
         res = _best_step(sub)
+        first = not found
         if res is None:
+            if first:
+                diag["reason"] = "coda_corta"
             break
         k, coef, gain = res
         t = sub["date"].iloc[k]
-        if coef >= 0 or gain < MIN_SSE_GAIN_EXT or (last - t).days < END_MARGIN_DAYS:
+        if coef >= 0:
+            reason = "gradino_su"
+        elif gain < threshold:
+            reason = "sotto_soglia"
+        elif (last - t).days < END_MARGIN_DAYS:
+            reason = "vicino_fine"
+        else:
+            reason = "accettato"
+        if first:
+            diag.update(reason=reason, best_gain=float(gain), best_coef=float(coef))
+        if reason != "accettato":
             break
         found.append((t, gain))
         start = t + pd.Timedelta(days=GAP_DAYS)
@@ -141,3 +162,16 @@ def estimate_extensions(daily: pd.DataFrame, date0: str, kwp0: float, max_ext: i
         out.append({"date": t.strftime("%Y-%m-%d"), "kwp_after": round(kwp, 2), "strength": round(gain, 4)})
         prev = kwp
     return out
+
+
+def predict_extensions(series: pd.DataFrame, date0: str, kwp0: float) -> list[dict]:
+    """Serie a 15 minuti di UN cliente (kwh/ts_epoch o colonne del dataset) ->
+    estimate_extensions(daily_ext_features(series), date0, kwp0) con i default
+    (EXT_THRESHOLD, min_tail_days=0). Dict con date, kwp_after, strength."""
+    return estimate_extensions(daily_ext_features(series), date0, kwp0)
+
+
+def top_k(rows: list[dict], k: int = 3) -> list[dict]:
+    """Estensioni di tutti i clienti (ogni dict con customer_id e strength) -> le k
+    con strength piu` alta, in ordine decrescente (a parita`, ordine di ingresso)."""
+    return sorted(rows, key=lambda r: -float(r["strength"]))[: max(k, 0)]

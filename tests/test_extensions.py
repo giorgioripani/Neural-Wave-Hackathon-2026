@@ -177,3 +177,31 @@ def test_load_ext_labels_wrong_field_count_raises(tmp_path):
     p.write_text("customer_id,extension_date,pv_capacity_after_extension_kwp\nPOD0001,2025-11-13,6,5\n")
     with pytest.raises(ValueError, match="numero di campi"):
         load_ext_labels(p)
+
+
+def test_default_threshold_is_ext_threshold():
+    import inspect
+    from src.models.extensions import EXT_THRESHOLD
+    sig = inspect.signature(estimate_extensions).parameters
+    assert EXT_THRESHOLD == 0.05 and sig["threshold"].default == EXT_THRESHOLD
+    assert sig["min_tail_days"].default == 0
+
+
+def test_predict_extensions_matches_estimate():
+    from src.models.extensions import predict_extensions
+    s = make_series([(INSTALL_DAY, 0.2), (EXT_DAY, 0.1)])
+    got = predict_extensions(s, day_str(INSTALL_DAY), 4.0)
+    assert got == estimate_extensions(daily_ext_features(s), day_str(INSTALL_DAY), 4.0)
+    assert len(got) == 1 and set(got[0]) == {"date", "kwp_after", "strength"}
+    raw = s.rename(columns={"kwh": "energy_consumption_kwh", "ts_epoch": "timestamp_epoch"})
+    assert predict_extensions(raw, day_str(INSTALL_DAY), 4.0) == got
+
+
+def test_top_k():
+    from src.models.extensions import top_k
+    rows = [{"customer_id": c, "date": "2024-01-01", "kwp_after": 5.0, "strength": g}
+            for c, g in [("A", 0.2), ("B", 0.9), ("C", 0.5), ("D", 0.5), ("E", 0.1)]]
+    assert [r["customer_id"] for r in top_k(rows)] == ["B", "C", "D"]
+    assert [r["customer_id"] for r in top_k(rows, k=1)] == ["B"]
+    assert top_k(rows, k=10) == sorted(rows, key=lambda r: -r["strength"])
+    assert top_k([]) == [] and top_k(rows, k=0) == []
