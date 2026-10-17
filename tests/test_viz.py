@@ -331,3 +331,56 @@ def test_check_out_of_bounds():
     ax.set_ylim(-2.5, 3.5)
     assert style.check_out_of_bounds(fig) == []
     plt.close(fig)
+
+
+def _event_data():
+    """6 clienti con FV e gradino noto (-1 nel log) al giorno 400 su 730; uno con meno dati
+    dopo (fine al giorno 620), uno installato al giorno 100 (escluso), uno senza FV."""
+    parts, labs = [], []
+    for i in range(6):
+        days = 620 if i == 5 else 730
+        parts.append(_series(f"POD{i:04d}", 400, days=days, seed=i))
+        labs.append((f"POD{i:04d}", True, _day(400)))
+    parts.append(_series("POD0100", 100, seed=7))
+    labs.append(("POD0100", True, _day(100)))
+    parts.append(_series("POD0101", None, seed=8))
+    labs.append(("POD0101", False, pd.NaT))
+    labels = pd.DataFrame(labs, columns=["customer_id", "pv_installed", "pv_installation_date"])
+    return pd.concat(parts, ignore_index=True), labels
+
+
+def test_event_alignment():
+    series, labels = _event_data()
+    days_df, excl = fig_report.event_days(series, labels)
+    assert days_df["k"].nunique() == 6 and excl == {"excl_short": 1}
+    assert set(days_df.columns) == {"k", "rel_day", "value"}  # nessun customer_id
+    w = fig_report.event_weeks(days_df)
+    before = w.loc[w["day"] < 0, "median"].dropna()
+    after = w.loc[w["day"] > 7, "median"].dropna()
+    assert abs(before.median()) < 0.1 and after.median() < before.median() - 0.5  # 0,1 / 0,3: log ~ -1,1
+    # dopo il giorno 220 restano 5 clienti (uno finisce prima): disegnate; con soglia 6 no
+    assert w.loc[w["day"].between(230, 320), "median"].notna().all()
+    w6 = fig_report.event_weeks(days_df, min_customers=6)
+    assert w6.loc[w6["day"].between(230, 320), "median"].isna().all()
+    assert w6.loc[w6["day"].between(-300, 200), "median"].notna().all()
+    assert (w.loc[w["n"] < 5, "median"].isna()).all()
+
+
+@pytest.mark.parametrize("talk", [False, True])
+def test_event_figure(tmp_path, checked, talk):
+    style.setup(talk)
+    series, labels = _event_data()
+    _ok(fig_report.make_a_event(series, labels, tmp_path))
+    _clean(checked)
+    assert any(name == "fig_report_a_event" and "6 customers included" in text and "1 less than 180" in text
+               for name, text in style.NOTES)
+
+
+def test_make_all_public(data, tmp_path, capsys):
+    from src.viz import make_all
+    assert make_all.main(_make_all_args(data, tmp_path) + ["--set", "public"]) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    paths = [x for x in lines if x.startswith(str(tmp_path))]
+    assert {Path(x).name for x in paths} == {"fig_report_a_event.pdf", "fig_report_b.pdf", "fig_report_c.pdf"}
+    assert not [x for x in lines if x.startswith("WARNING")], lines
+    assert [x for x in lines if x.startswith("fig_report_a_event:")]

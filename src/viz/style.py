@@ -58,6 +58,14 @@ TEXT = {
     "model_v2": "v2 model", "weekly_median": "weekly median", "midday_zero": r"midday $\approx$ 0",
     "note_floor": "{n} days with midday \u2248 0 drawn as marks on the bottom edge", "true_date": "true date", "est_date": "estimated date",
     "typical": "Typical case: error {err}", "worst": "Worst case: error {err}",
+    # fig_report_a_event
+    "days_from_inst": "days from installation", "y_event": "log(midday/night)\nvs. pre-installation",
+    "event_title": "All PV customers (n = {n})", "installation": "installation",
+    "median_customers": "median over customers", "iqr": "interquartile range",
+    "note_event": "{n} customers included; excluded: {excluded}",
+    "note_event_empty": "no week with at least {m} customers: nothing drawn",
+    "excl_no_date": "no installation date", "excl_no_series": "no series",
+    "excl_short": "less than 180 days before or after installation", "excl_no_base": "no valid day in the 180 days before",
     # fig_report_b
     "true_kwp": "true kWp", "est_kwp": "estimated kWp", "pm50": r"$\pm 50\%$", "identity": "estimated = true",
     "p_title": "P = {P}",

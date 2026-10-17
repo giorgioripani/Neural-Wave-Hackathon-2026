@@ -14,6 +14,7 @@ import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from matplotlib.ticker import FixedLocator, NullFormatter, NullLocator, ScalarFormatter
 
 from src.eval.score import official_score
@@ -112,6 +113,91 @@ def make_a(series, loo_path, fig_dir, fmt="pdf") -> list:
     legend_below(fig, handles, labels, ncol=2)
     note("fig_report_a", TEXT["note_floor"].format(n=int(floor.sum())))
     return [save(fig, "fig_report_a", fig_dir, fmt)]
+
+
+EVENT_MIN_DAYS = 180      # giorni validi richiesti prima e dopo la data vera
+EVENT_BASE_DAYS = 180     # livello "prima" = mediana dei 180 giorni prima
+EVENT_RANGE = (-365, 365)  # giorni relativi disegnati
+EVENT_MIN_CUSTOMERS = 5   # settimane disegnate solo con almeno 5 clienti
+
+
+def event_days(series: pd.DataFrame, labels: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Clienti con FV -> (righe k, rel_day, value) e motivi di esclusione {motivo: n}.
+    value = log(midday/night) meno la mediana del cliente nei EVENT_BASE_DAYS giorni
+    prima della data vera; esclusi i giorni con mezzogiorno ~ 0 (detect.ZERO_KWH).
+    k e` un indice anonimo del cliente (nessun customer_id)."""
+    pos = labels[labels["pv_installed"]]
+    groups = dict(tuple(series.groupby("customer_id", sort=True)))
+    rows, excl = [], {}
+    for k, (cid, true) in enumerate(sorted(zip(pos["customer_id"], pos["pv_installation_date"]))):
+        reason = None
+        if pd.isna(true):
+            reason = "excl_no_date"
+        elif cid not in groups:
+            reason = "excl_no_series"
+        else:
+            d = daily_ext_features(groups[cid])
+            d = d[d["midday_kwh"] > ZERO_KWH]
+            rel = (pd.to_datetime(d["date"]) - pd.Timestamp(true).normalize()).dt.days.to_numpy()
+            val = np.log(d["midday_ratio"].clip(lower=EPS_KWH).to_numpy())
+            base = (rel < 0) & (rel >= -EVENT_BASE_DAYS)
+            if (rel < 0).sum() < EVENT_MIN_DAYS or (rel >= 0).sum() < EVENT_MIN_DAYS:
+                reason = "excl_short"
+            elif not base.any():
+                reason = "excl_no_base"
+            else:
+                keep = (rel >= EVENT_RANGE[0]) & (rel <= EVENT_RANGE[1])
+                rows.append(pd.DataFrame({"k": k, "rel_day": rel[keep], "value": val[keep] - np.median(val[base])}))
+        if reason:
+            excl[reason] = excl.get(reason, 0) + 1
+    out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["k", "rel_day", "value"])
+    return out, excl
+
+
+def event_weeks(days_df: pd.DataFrame, min_customers: int = EVENT_MIN_CUSTOMERS) -> pd.DataFrame:
+    """Settimane relative (week = floor(rel_day / 7)): mediana per cliente nella
+    settimana, poi mediana, 25 e 75 percentile fra i clienti e n. Settimane con meno
+    di min_customers clienti: statistiche NaN (non disegnate)."""
+    d = days_df.assign(week=np.floor(days_df["rel_day"].to_numpy(float) / 7).astype(int))
+    per = d.groupby(["week", "k"])["value"].median().reset_index()
+    g = per.groupby("week")["value"]
+    w = pd.DataFrame({"n": g.count(), "median": g.median(), "q25": g.quantile(0.25), "q75": g.quantile(0.75)})
+    full = range(int(np.floor(EVENT_RANGE[0] / 7)), int(np.floor(EVENT_RANGE[1] / 7)) + 1)
+    w = w.reindex(full)
+    w["n"] = w["n"].fillna(0).astype(int)
+    w.loc[w["n"] < min_customers, ["median", "q25", "q75"]] = np.nan
+    w = w.rename_axis("week").reset_index()
+    w["day"] = w["week"] * 7 + 3.5  # centro della settimana
+    return w
+
+
+def make_a_event(series, labels, fig_dir, fmt="pdf") -> list:
+    days_df, excl = event_days(series, labels)
+    w = event_weeks(days_df)
+    n = int(days_df["k"].nunique())
+    fig, ax = _fig()
+    ax.fill_between(w["day"], w["q25"], w["q75"], color=OKABE_ITO["sky"], alpha=0.35, lw=0, zorder=1)
+    ax.plot(w["day"], w["median"], color=DARK, lw=1.0, zorder=3)
+    ax.axhline(0, color=GREY, lw=0.5, zorder=2)
+    ax.axvline(0, color="black", ls="--", lw=0.8, zorder=4)
+    if w["median"].notna().any():
+        lo, hi = np.nanmin(w["q25"]), np.nanmax(w["q75"])
+        pad = MARGIN * (hi - lo) if hi > lo else 0.1
+        ax.set_ylim(lo - pad, hi + pad)
+    else:  # nessuna settimana con abbastanza clienti
+        ax.set_ylim(-1, 1)
+        note("fig_report_a_event", TEXT["note_event_empty"].format(m=EVENT_MIN_CUSTOMERS))
+    ax.set_xlim(*EVENT_RANGE)
+    ax.set_xticks([-360, -180, 0, 180, 360])
+    ax.set_xlabel(TEXT["days_from_inst"])
+    ax.set_ylabel(TEXT["y_event"])
+    ax.set_title(TEXT["event_title"].format(n=n))
+    handles = [Line2D([], [], color=DARK, lw=1.0), Patch(color=OKABE_ITO["sky"], alpha=0.35, lw=0),
+               Line2D([], [], color="black", ls="--", lw=0.8)]
+    legend_below(fig, handles, [TEXT["median_customers"], TEXT["iqr"], TEXT["installation"]], ncol=2)
+    excluded = ", ".join(f"{v} {TEXT[k]}" for k, v in sorted(excl.items())) or "none"
+    note("fig_report_a_event", TEXT["note_event"].format(n=n, excluded=excluded))
+    return [save(fig, "fig_report_a_event", fig_dir, fmt)]
 
 
 def make_b(loo_path, fig_dir, fmt="pdf") -> list:

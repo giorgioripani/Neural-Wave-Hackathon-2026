@@ -2,12 +2,14 @@
 """Figure e tabelle del report e della presentazione.
 
 Uso (dalla radice del repo):
-    python src/viz/make_all.py [--set report|talk|all]
+    python src/viz/make_all.py [--set report|talk|public|all]
         [--series data/clean/dev.parquet] [--labels ...] [--outputs outputs]
         [--artifacts artifacts] [--fig-dir outputs/figures] [--tab-dir outputs/tables]
         [--ext-window last730|full]
 
 --set report (default): SOLO fig_report_a, fig_report_b e fig_report_c, in PDF.
+--set public: fig_report_a_event (tutti i clienti con FV allineati alla data di
+    installazione, nessun cliente singolo), fig_report_b e fig_report_c, in PDF.
 --set talk: fig1_overview, fig_report_a/b/c, fig4_date_examples, fig6_date_forest,
     fig8_score; PNG con caratteri grandi (style.setup(talk=True)).
 --set all: report + talk + fig1_overview (pagina intera) e fig1_overview_compact,
@@ -41,10 +43,11 @@ DATE_FINALS = [f"date_final_{p}" for p in PROTOCOLS]
 NEEDS = {
     "report": ["series", "loo"],
     "talk": ["series", "loo", *DATE_FINALS],
+    "public": ["series", "loo"],
     "extra": ["series", "loo", "capacity_csv", *DATE_FINALS, "window_features", "detect_params", "detect_scores",
               "inject_summary", "ext_diag"],
 }
-SETS = {"report": ["report"], "talk": ["talk"], "all": ["report", "talk", "extra"]}
+SETS = {"report": ["report"], "talk": ["talk"], "public": ["public"], "all": ["report", "talk", "extra"]}
 
 
 def capacity_csvs(outputs) -> list:
@@ -53,6 +56,13 @@ def capacity_csvs(outputs) -> list:
 
 def run_report(p, series, labels, a, fig_dir, tab_dir) -> list:
     made = fig_report.make_a(series, p["loo"], fig_dir, "pdf")
+    made += fig_report.make_b(p["loo"], fig_dir, "pdf")
+    made += fig_report.make_c(p["loo"], fig_dir, "pdf")
+    return made
+
+
+def run_public(p, series, labels, a, fig_dir, tab_dir) -> list:
+    made = fig_report.make_a_event(series, labels, fig_dir, "pdf")
     made += fig_report.make_b(p["loo"], fig_dir, "pdf")
     made += fig_report.make_c(p["loo"], fig_dir, "pdf")
     return made
@@ -85,7 +95,7 @@ def run_extra(p, series, labels, a, fig_dir, tab_dir) -> list:
     return made
 
 
-RUNNERS = {"report": (run_report, False), "talk": (run_talk, True), "extra": (run_extra, False)}
+RUNNERS = {"report": (run_report, False), "public": (run_public, False), "talk": (run_talk, True), "extra": (run_extra, False)}
 
 
 def main(argv=None) -> int:
@@ -137,7 +147,7 @@ def main(argv=None) -> int:
         print(path)
     for w in warnings:
         print(w)
-    for name, text in dict(style.NOTES).items():  # fig. 1: clienti esclusi (per la didascalia)
+    for name, text in style.NOTES:  # fig. 1: clienti esclusi (per la didascalia)
         print(f"{name}: {text}")
     return 0
 
