@@ -8,8 +8,8 @@
 """Task 1: does the customer have PV? (Flavio)
 
 Pipeline: 15-min series -> daily_profile() (one row per UTC day, mean kWh per
-fixed UTC band) -> features_from_daily() (one dict per customer/window)
--> predict(): threshold rule on ONE feature chosen by run_detect.py.
+fixed UTC band) -> features_from_daily() (last 2 years only, one dict per customer/window)
+-> predict(): dip_spread rule, then rec_drop second pass (thresholds from run_detect.py).
 Only consumption and calendar: fixed UTC hours, no sun/weather/location.
 """
 import json
@@ -45,6 +45,7 @@ SPREAD_Q = (0.1, 0.9) # dip_spread: quantiles of the daily summer dip (sunny vs 
 MIN_SUMMER_DAYS = 10  # dip_spread / var_summer need at least 10 summer days
 RECENT_DAYS = 90      # rec_drop: last 90 days vs the same calendar days one year earlier
 MIN_RECENT_DAYS = 20  # rec_drop: at least 20 days on each side
+LAST_DAYS = 730       # features use only the last 2 years of a series (= training windows in run_detect.py)
 
 FEATURES = [
     "summer_level",    # 1 median log(midday/night) in summer           (low = PV)
@@ -99,10 +100,13 @@ def _step_size(y: np.ndarray) -> float:
 
 
 def features_from_daily(d: pd.DataFrame) -> dict:
-    """Daily profile of ONE customer (or one window) -> dict of FEATURES (NaN if not computable)."""
+    """Daily profile of ONE customer (or one window) -> dict of FEATURES (NaN if not computable).
+    Only the last LAST_DAYS days are used: same length as the training windows, less weight
+    on old habit changes. A shorter series is used whole."""
     nan = float("nan")
     if d.empty:
         return dict.fromkeys(FEATURES, nan)
+    d = d[d["date"] > d["date"].max() - pd.Timedelta(days=LAST_DAYS)].reset_index(drop=True)
     month = d["date"].dt.month
     summer, winter = month.isin(SUMMER), month.isin(WINTER)
     weekend = d["date"].dt.dayofweek >= 5
@@ -196,8 +200,13 @@ def apply_recent(proba: pd.Series, x: pd.Series, sign: int, threshold: float, sc
 
 def predict(df: pd.DataFrame) -> dict[str, float]:
     """Return {customer_id: probability of PV} with exactly one entry per customer."""
+    proba = proba_from_features(customer_features(df))
+    return {str(k): float(v) for k, v in proba.items()}
+
+
+def proba_from_features(feat: pd.DataFrame) -> pd.Series:
+    """Output of customer_features() -> probability of PV per customer (the saved rule)."""
     p = load_params()
-    feat = customer_features(df)
     proba = proba_from_feature(feat[p["feature"]], p["sign"], p["threshold"], p["scale"])
     tb = p.get("tiebreak")
     if tb and tb["band"] > 0:
@@ -207,4 +216,4 @@ def predict(df: pd.DataFrame) -> dict[str, float]:
     if rc:
         proba = apply_recent(proba, feat[rc["feature"]], rc["sign"], rc["threshold"], rc["scale"])
     proba[proba.index.isin(feat.attrs.get("failed", []))] = np.nan  # crash -> no probability (fallback TRUE)
-    return {str(k): float(v) for k, v in proba.items()}
+    return proba
