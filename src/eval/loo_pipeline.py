@@ -29,10 +29,6 @@ sys.path.insert(0, str(ROOT))
 from src.eval.score import find_labels, load_labels  # noqa: E402
 from src.eval.validate import POS_RANGE, SEED, crop, report, validate, window  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
-
-# run_detect.py importa ancora src.eval.score_date, unito in score.py (0aca64c): alias finche' non si corregge
-import src.eval.score as _score  # noqa: E402
-sys.modules.setdefault("src.eval.score_date", _score)
 from src.models import capacity, capacity_blend, detect, run_detect  # noqa: E402
 from src.models import date as date_mod  # noqa: E402
 from src.models.capacity_common import daily_kw  # noqa: E402

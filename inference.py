@@ -12,6 +12,7 @@ di riserva. Niente rete, niente data/: gli artefatti stanno in artifacts/.
 import csv
 import importlib
 import json
+import math
 import sys
 import traceback
 from pathlib import Path
@@ -119,15 +120,17 @@ def call_detect(mod, df: pd.DataFrame) -> dict:
 def call_date(mod, series: pd.DataFrame) -> str:
     """date.estimate(daily_midday_ratio(serie del cliente)) -> 'AAAA-MM-GG'."""
     daily = mod.daily_midday_ratio(series) if hasattr(mod, "daily_midday_ratio") else series
-    out = str(mod.estimate(daily))
-    pd.Timestamp(out)  # valida il formato
-    return out[:10]
+    out = mod.estimate(daily)
+    ts = pd.Timestamp(out)  # valida il formato
+    if pd.isna(ts):  # NaT o None: si usa la riserva, mai "NaT" nel file
+        raise ValueError(f"data non valida: {out!r}")
+    return ts.strftime("%Y-%m-%d")
 
 
 def call_capacity(mod, series: pd.DataFrame, date: str) -> float:
     """capacity.estimate(serie del cliente, data) -> kWp."""
     kwp = float(mod.estimate(series, date))
-    if not (kwp > 0):
+    if not (kwp > 0 and math.isfinite(kwp)):
         raise ValueError(f"kWp non valido: {kwp}")
     return kwp
 

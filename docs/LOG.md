@@ -130,3 +130,9 @@ Limite: si ricalcolano soglie e coefficienti, non la scelta di feature e metodo 
 ## 17/10 — Lettore tollerante del test (Andrea, con agente Claude, richiesta di Flavio)
 Prima: un epoch vuoto o testo in una riga del test faceva fallire tutto inference.py (read_test fuori da ogni try), e un cliente con sole righe non valide spariva dall'output.
 Ora: src.loading.load.load_test (via veloce come il vecchio read_test; se ci sono righe malformate, lettura come testo con le righe saltate), all_ids da tutte le righe del file, rete di sicurezza in main() (tutti TRUE). fake_test: predictions.csv e estensioni identici byte per byte, 19 s contro 17. Test con CSV sintetici in tests/test_load_validate.py.
+
+## 17/10 — Revisione di main (Francesco, con agente Claude)
+Agente usato per la revisione del codice di main (09d3ab3), i test di integrazione e i casi limite su dati sintetici. Correzioni nel branch fix/bug-fixes, proposte in IMPROVEMENTS.md.
+Bug corretti in inference.py: crash con un timestamp_epoch vuoto; crash e zeri persi con intestazione con spazi e id numerici; duplicati non tolti (diverso da load_series); data "NaT" e kWp inf accettati. Uscite sul test finto identiche a main.
+Scartata: se refine_date0 dice pv_gia_presente, ristimare la data sul tratto prima di date0. D sul test finto da 0,372 a 0,338; usare il primo giorno della serie dà lo stesso 0,338.
+Misura per il report: LOO tutto_loo con finestre "ultimi 2 anni" 78,20 (F1 0,952, D 0,372, P 0,436) contro 77,93 (D 0,608) con la data vera nel 10-90% della finestra. Nel dev 9 clienti su 22 con PV hanno l'installazione prima degli ultimi 2 anni.
