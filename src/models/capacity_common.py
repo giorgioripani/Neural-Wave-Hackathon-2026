@@ -1,12 +1,12 @@
-"""Parti comuni ai metodi kWp (capacity_a, capacity_b).
+"""Parts shared by the kWp methods (capacity_a, capacity_b).
 
-Contiene solo cio` che deve essere IDENTICO tra i metodi perche` il confronto sia
-equo: cifre giornaliere e scelta dei giorni di riferimento. Ritaglio a 2 anni e
-leave-one-out li fa src/eval/validate.py (vedi src/models/train_capacity.py).
+Contains only what must be IDENTICAL across methods for a fair comparison:
+daily figures and choice of the reference days. The 2-year cropping and the
+leave-one-out are done by src/eval/validate.py (see src/models/train_capacity.py).
 
-Cifre giornaliere = daily_features di src/loading/load.py (fasce FISSE in UTC:
-mezzogiorno 10-13, notte 0-4, sera 17-21; niente sole/alba/tramonto), portate in
-kW, piu` la quota di quarti d'ora di mezzogiorno a prelievo ~0 (saturazione).
+Daily figures = daily_features of src/loading/load.py (FIXED UTC bands:
+midday 10-13, night 0-4, evening 17-21; no sun/sunrise/sunset), converted to
+kW, plus the share of midday quarter-hours with ~0 withdrawal (saturation).
 """
 from __future__ import annotations
 
@@ -20,13 +20,13 @@ from src.loading.load import EPS_KWH, MIDDAY_UTC, daily_features
 
 SUMMER_MONTHS = (5, 6, 7, 8)
 WINTER_MONTHS = (11, 12, 1, 2)
-MIN_DAYS = 30            # giorni minimi per ogni gruppo (prima, estate dopo, inverno dopo)
-ZERO_KW = 0.01           # sotto questa potenza il prelievo conta come "zero" (PV >= consumo)
-FALLBACK_KWP = 169.5     # mediana dei kWp nelle etichette dev (22 clienti con PV)
+MIN_DAYS = 30            # minimum days per group (before, summer after, winter after)
+ZERO_KW = 0.01           # below this power the withdrawal counts as "zero" (PV >= consumption)
+FALLBACK_KWP = 169.5     # median kWp in the dev labels (22 customers with PV)
 
 
 def _standard_columns(series: pd.DataFrame) -> pd.DataFrame:
-    """Accetta le colonne di load_series (kwh, ts_epoch) o quelle originali del dataset."""
+    """Accepts the load_series columns (kwh, ts_epoch) or the original dataset ones."""
     s = series.rename(columns={"energy_consumption_kwh": "kwh", "timestamp_epoch": "ts_epoch"})
     s = s.loc[:, ~s.columns.duplicated()]
     if "customer_id" not in s.columns:
@@ -35,10 +35,10 @@ def _standard_columns(series: pd.DataFrame) -> pd.DataFrame:
 
 
 def daily_kw(series: pd.DataFrame) -> pd.DataFrame:
-    """Serie a 15 min di UN cliente -> una riga per giorno UTC:
-    date, month, weekday, mid_kw, night_kw, evening_kw, all_kw (potenza media in kW),
-    zero_mid (quota di quarti d'ora di mezzogiorno con prelievo ~0).
-    Giorni senza misure a mezzogiorno o di notte vengono tolti.
+    """15-min series of ONE customer -> one row per UTC day:
+    date, month, weekday, mid_kw, night_kw, evening_kw, all_kw (mean power in kW),
+    zero_mid (share of midday quarter-hours with ~0 withdrawal).
+    Days without midday or night measurements are dropped.
     """
     s = _standard_columns(series)
     f = daily_features(s)
@@ -57,14 +57,14 @@ def daily_kw(series: pd.DataFrame) -> pd.DataFrame:
 
 
 def split_days(daily: pd.DataFrame, install_date: str) -> dict:
-    """Divide i giorni rispetto alla data. Ritorna:
-    ref     giorni di riferimento "senza PV": prima della data se >= MIN_DAYS,
-            altrimenti i mesi invernali dopo la data (PV debole), altrimenti None
-    has_pre 1.0 se ref viene dal "prima", 0.0 altrimenti
-    summer  giorni estivi dopo la data (tutto il "dopo" se l'estate e` troppo corta)
-    winter  giorni invernali dopo la data
-    after   tutti i giorni dopo la data
-    Un gruppo con meno di MIN_DAYS giorni e` None.
+    """Splits the days around the date. Returns:
+    ref     "no PV" reference days: before the date if >= MIN_DAYS,
+            otherwise the winter months after the date (weak PV), otherwise None
+    has_pre 1.0 if ref comes from "before", 0.0 otherwise
+    summer  summer days after the date (all of "after" if the summer is too short)
+    winter  winter days after the date
+    after   all days after the date
+    A group with fewer than MIN_DAYS days is None.
     """
     t0 = pd.Timestamp(install_date)
     before, after = daily[daily["date"] < t0], daily[daily["date"] >= t0]
@@ -82,17 +82,17 @@ def split_days(daily: pd.DataFrame, install_date: str) -> dict:
 
 
 def midday_ratio(days: pd.DataFrame) -> float:
-    """Rapporto medio mezzogiorno/notte di un gruppo di giorni."""
+    """Mean midday/night ratio of a group of days."""
     return float((days["mid_kw"].mean() + EPS_KWH) / (days["night_kw"].mean() + EPS_KWH))
 
 
 def deficit(days: pd.DataFrame, ratio: float) -> np.ndarray:
-    """kW 'spariti' a mezzogiorno per giorno: baseline (ratio x notte) - prelievo."""
+    """kW 'missing' at midday per day: baseline (ratio x night) - withdrawal."""
     return ratio * days["night_kw"].to_numpy() - days["mid_kw"].to_numpy()
 
 
 def p_score(err) -> np.ndarray:
-    """Punteggio P ufficiale per cliente: 1 a errore 0, 0 dal 50% di errore in su."""
+    """Official P score per customer: 1 at zero error, 0 from 50% error upwards."""
     return np.clip(1 - np.asarray(err, dtype=float) / 0.5, 0, 1)
 
 

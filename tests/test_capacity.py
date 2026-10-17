@@ -1,5 +1,5 @@
-"""Test dei moduli kWp (capacity, capacity_a, capacity_b, capacity_common, train_capacity)
-su dati SINTETICI: nessun dato AIL."""
+"""Tests of the kWp modules (capacity, capacity_a, capacity_b, capacity_common, train_capacity)
+on SYNTHETIC data: no AIL data."""
 import math
 
 import numpy as np
@@ -20,7 +20,7 @@ def _one(series, labels, pv: bool):
 
 
 def _fake_table(n=12, seed=42):
-    """Tabella di feature inventata: kWp cresce con drop_kw/peak_kw/log_size."""
+    """Made-up feature table: kWp grows with drop_kw/peak_kw/log_size."""
     rng = np.random.default_rng(seed)
     kwp = rng.uniform(30, 900, n)
     return pd.DataFrame({
@@ -121,12 +121,12 @@ def test_a_fit_predict_close_on_fake_table():
     t = _fake_table(n=20)
     p = capacity_a.fit(t, alpha=1e-6)
     pred = np.array([capacity_a.predict(r, p) for r in t.to_dict("records")])
-    assert np.allclose(pred, t["kwp"], rtol=1e-3)  # log kWp e` lineare in log_size
+    assert np.allclose(pred, t["kwp"], rtol=1e-3)  # log kWp is linear in log_size
 
 
 def test_a_predict_imputes_missing_features():
     p = capacity_a.fit(_fake_table())
-    kwp = capacity_a.predict({"log_size": 4.0}, p)  # altre feature mancanti -> mediana
+    kwp = capacity_a.predict({"log_size": 4.0}, p)  # other features missing -> median
     assert p["kwp_min"] <= kwp <= p["kwp_max"]
 
 
@@ -169,7 +169,7 @@ def test_size_predict_falls_back_on_bad_feature():
         assert capacity_size.predict({"night_ref_kw": x}, p) == p["fallback_kwp"]
 
 
-# ----------------------------------------------------------------- combinazione con la mediana
+# ----------------------------------------------------------------- blend with the median
 
 def test_blend_combine_geo_and_clip():
     assert capacity_blend.combine(400.0, 100.0, "geo") == pytest.approx(200.0)
@@ -198,7 +198,7 @@ def test_blend_predict_between_base_and_median(base, mode):
 
 def test_blend_rejects_unknown_base_or_mode():
     with pytest.raises(ValueError):
-        capacity_blend.fit(_fake_table(), "nessuno", "geo")
+        capacity_blend.fit(_fake_table(), "unknown", "geo")
     with pytest.raises(ValueError):
         capacity_blend.fit(_fake_table(), "b", "media")
 
@@ -255,7 +255,7 @@ def test_fit_predict_uses_estimated_date_when_given():
     assert p["pv_installation_date"] == "2023-06-15" and p["pv_capacity_kwp"] > 0
 
 
-# ----------------------------------------------------------------- scelta del metodo
+# ----------------------------------------------------------------- method choice
 
 def test_choose_needs_min_gain_over_median():
     assert train_capacity.choose({"median": 0.415, "x": 0.430}) == "median"

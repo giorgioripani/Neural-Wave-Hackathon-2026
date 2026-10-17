@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Crea un finto test set dai dati di sviluppo, senza etichette.
+"""Creates a fake test set from the development data, without labels.
 
-Per default la serie intera di ogni cliente, come il test vero (2022-2025, circa 4 anni).
-Con --last730 solo gli ultimi 2 anni di ogni cliente: prova di robustezza.
+By default the full series of every customer, like the real test (2022-2025, about 4 years).
+With --last730 only the last 2 years of every customer: robustness check.
 
-Uso: python demo/make_fake_test.py [--src data/clean/dev.parquet] [--dst data/fake_test.csv] [--sep ,] [--last730]
+Usage: python demo/make_fake_test.py [--src data/clean/dev.parquet] [--dst data/fake_test.csv] [--sep ,] [--last730]
      python demo/make_fake_test.py --last730 --dst data/fake_test_2y.csv
-Stampa solo conteggi.
+Prints counts only.
 """
 import argparse
 from pathlib import Path
@@ -26,7 +26,7 @@ def main() -> int:
     ap.add_argument("--src", default="data/clean/dev.parquet")
     ap.add_argument("--dst", default="data/fake_test.csv")
     ap.add_argument("--sep", default=",")
-    ap.add_argument("--last730", action="store_true", help="solo gli ultimi 2 anni di ogni cliente")
+    ap.add_argument("--last730", action="store_true", help="only the last 2 years of every customer")
     a = ap.parse_args()
     Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
 
@@ -43,8 +43,8 @@ def main() -> int:
     n_rows, n_cust = con.execute(
         f"SELECT count(*), count(DISTINCT customer_id) FROM read_parquet({q(a.src)})").fetchone()
     k_rows, k_cust = con.execute("SELECT count(*), count(DISTINCT customer_id) FROM cut").fetchone()
-    print(f"Sorgente: {n_rows} righe, {n_cust} clienti")
-    print(f"Scritto {a.dst}: {k_rows} righe, {k_cust} clienti")
+    print(f"Source: {n_rows} rows, {n_cust} customers")
+    print(f"Written {a.dst}: {k_rows} rows, {k_cust} customers")
     return 0
 
 

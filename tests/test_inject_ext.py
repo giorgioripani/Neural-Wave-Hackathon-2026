@@ -15,8 +15,8 @@ DAYS, INSTALL_DAY, DROP = 900, 200, 0.2
 
 
 def make_series(days=DAYS, install_day=INSTALL_DAY, seed=42):
-    """SINTETICA, UTC: notte 0,2 kWh, mezzogiorno (10-13 UTC) 0,4 kWh x onda stagionale
-    (+-10%), meno DROP (x la stessa onda) dal giorno install_day."""
+    """SYNTHETIC, UTC: night 0.2 kWh, midday (10-13 UTC) 0.4 kWh x seasonal wave
+    (+-10%), minus DROP (x the same wave) from day install_day."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range(START, periods=days * 96, freq="15min", tz="UTC")
     day = np.arange(len(idx)) // 96
@@ -35,24 +35,24 @@ def day_ts(d):
 def test_monthly_drop_shape_and_values():
     drop = monthly_drop(daily_ext_features(make_series()), day_ts(INSTALL_DAY))
     assert drop.shape == (12,) and np.isfinite(drop).all()
-    assert np.all(np.abs(drop - DROP) < 0.05)  # DROP x onda del +-10%
+    assert np.all(np.abs(drop - DROP) < 0.05)  # DROP x wave of +-10%
 
 
 def test_monthly_drop_interpolates_missing_month():
     daily = daily_ext_features(make_series())
     months = pd.to_datetime(daily["date"]).dt.month
     after = pd.to_datetime(daily["date"]) >= day_ts(INSTALL_DAY)
-    drop = monthly_drop(daily[~((months == 3) & after)], day_ts(INSTALL_DAY))  # marzo solo prima
+    drop = monthly_drop(daily[~((months == 3) & after)], day_ts(INSTALL_DAY))  # March only before
     assert np.isfinite(drop[2]) and abs(drop[2] - (drop[1] + drop[3]) / 2) < 1e-9
 
 
 def test_monthly_drop_skips_short_history():
-    assert monthly_drop(daily_ext_features(make_series(install_day=100)), day_ts(100)) is None  # ~3 mesi prima
+    assert monthly_drop(daily_ext_features(make_series(install_day=100)), day_ts(100)) is None  # ~3 months before
 
 
 def test_inject_only_midday_after_date():
     s = make_series(days=60)
-    drop = np.full(12, 0.5)  # piu` del consumo: deve tagliare a 0
+    drop = np.full(12, 0.5)  # more than the consumption: must clip at 0
     out = inject(s, day_ts(30), 0.6, drop)
     ts = pd.to_datetime(s["ts_epoch"], unit="s", utc=True)
     mid = ((ts.dt.hour >= 10) & (ts.dt.hour < 13)).to_numpy()
@@ -89,7 +89,7 @@ def test_evaluate_customer_finds_strong_injection():
     assert len(inj) == 2 * len(R_VALUES) and len(orig) == 1
     df = pd.DataFrame(inj)
     assert df.loc[df["r"] == 1.0, "found"].all()
-    assert orig[0]["n_pred"] == 0  # serie originale con un solo gradino: nessun falso allarme
+    assert orig[0]["n_pred"] == 0  # original series with a single step: no false alarm
     assert set(THRESHOLDS) >= {0.10}
     assert all(row["date0"] == row["date0_orig"] for row in inj)
 
@@ -117,9 +117,9 @@ def test_main_on_synthetic(tmp_path, monkeypatch, capsys):
                                       "--out-dir", str(tmp_path / "out")])
     assert inject_ext_dev.main() == 0
     lines = capsys.readouterr().out.strip().splitlines()
-    assert lines[0].startswith("Clienti usati: 1, saltati: 0")  # POD0002 escluso: ha un'estensione
-    assert len(lines) == 3 + len(THRESHOLDS) and lines[1].startswith("date0 ristimato (v2)")
-    assert lines[2].strip().startswith("di cui data vera")
+    assert lines[0].startswith("Customers used: 1, skipped: 0")  # POD0002 excluded: it has an extension
+    assert len(lines) == 3 + len(THRESHOLDS) and lines[1].startswith("date0 re-estimated (v2)")
+    assert lines[2].strip().startswith("of which true date")
     assert all("F1_ext" in ln for ln in lines[3:])
     for f in ("injections.csv", "originals.csv", "skipped.csv", "summary.csv"):
         assert (tmp_path / "out" / f).exists()
@@ -130,7 +130,7 @@ def test_reest_near():
     inj = pd.DataFrame({"customer_id": "A", "inj_date": ["2024-01-01"] * 4 + ["2024-06-01"] * 2,
                         "r": [0.3, 0.3, 1.0, 1.0, 0.6, 0.6], "threshold": [0.05, 0.1] * 3,
                         "date0_reest": ["2024-01-20"] * 2 + ["2023-05-01"] * 2 + ["2024-07-15"] * 2})
-    near = reest_near(inj)  # una riga per iniezione, non per soglia
+    near = reest_near(inj)  # one row per injection, not per threshold
     assert near["tot"] == (1, 3) and near[0.3] == (1, 1) and near[1.0] == (0, 1) and near[0.6] == (0, 1)
 
 
@@ -148,5 +148,5 @@ def test_true_date_split():
         "date0_reest": ["2024-01-10", "2024-01-10", "2024-01-05", "2024-01-20", "2023-06-01"],
         "true_date": ["2022-05-01", "2022-05-01", "2023-03-01", "2023-06-01", "2022-01-01"],
         "win_start": ["2023-01-01"] * 5})
-    # A: prima della finestra (contato una volta), B: giorno 59, C: dopo, D: ristima lontana (esclusa)
+    # A: before the window (counted once), B: day 59, C: after, D: distant re-estimate (excluded)
     assert true_date_split(inj) == (2, 1)

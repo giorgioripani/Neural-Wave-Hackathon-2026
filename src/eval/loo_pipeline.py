@@ -1,25 +1,25 @@
-"""Punteggio leave-one-out della pipeline intera (detect + date + capacity), come inference.py.
+"""Leave-one-out score of the whole pipeline (detect + date + capacity), as in inference.py.
 
-Protocolli (--protocol):
-    serie_intera    (default) ogni cliente lasciato fuori e` valutato sulla serie intera,
-                    come il test vero (2022-2025, circa 4 anni); deterministico, 1 giro
-    finestre_2anni  validate.py con finestre di 2 anni, 5 giri, seed 42 (stesse finestre
-                    della baseline): solo prova di robustezza
-L'addestramento (soglie di detect sulle finestre di run_detect, capacity come train_capacity)
-e` lo stesso nei due protocolli, come per gli artefatti usati da inference.py.
-Modi (stesse finestre per tutti, cambia solo da dove vengono i parametri):
-    artefatti   detect_params.json e capacity.json attuali: OTTIMISTA, calcolati anche
-                sul cliente lasciato fuori
-    detect_loo  soglie di detect (dip_spread + rec_drop) ricalcolate senza il cliente
-                lasciato fuori, come in run_detect.py; capacity dall'artefatto
-    tutto_loo   come detect_loo, e anche capacity (geo_b) riaddestrato senza il cliente
-date.py non ha parametri addestrati sui dati: e` uguale in tutti i modi.
-La struttura della regola (dip_spread, poi rec_drop) e il metodo geo_b restano quelli
-scelti sui 40 clienti: si ricalcolano soglie e coefficienti, non la scelta del metodo.
-Le estensioni non sono misurate (una sola etichettata nel dev).
+Protocols (--protocol):
+    serie_intera    (default, "full series") each left-out customer is scored on its full
+                    series, like the real test (2022-2025, about 4 years); deterministic, 1 round
+    finestre_2anni  ("2-year windows") validate.py with 2-year windows, 5 rounds, seed 42
+                    (same windows as the baseline): robustness check only
+Training (detect thresholds on the run_detect windows, capacity as in train_capacity)
+is the same in both protocols, as for the artifacts used by inference.py.
+Modes (same windows for all, only the origin of the parameters changes):
+    artefatti   current detect_params.json and capacity.json ("artifacts"): OPTIMISTIC,
+                fitted on the left-out customer too
+    detect_loo  detect thresholds (dip_spread + rec_drop) refitted without the left-out
+                customer, as in run_detect.py; capacity from the artifact
+    tutto_loo   ("all LOO") as detect_loo, and capacity (geo_b) also refitted without the customer
+date.py has no parameters trained on data: it is the same in every mode.
+The structure of the rule (dip_spread, then rec_drop) and the geo_b method stay those
+chosen on the 40 customers: thresholds and coefficients are refitted, not the method choice.
+Extensions are not measured (only one labelled in the development set).
 
-Uso: python -m src.eval.loo_pipeline [--modes artefatti,detect_loo,tutto_loo] [--protocol serie_intera|finestre_2anni]
-Stampa <= 10 righe; previsioni per cliente in outputs/loo_pipeline_<modo>.csv.
+Usage: python -m src.eval.loo_pipeline [--modes artefatti,detect_loo,tutto_loo] [--protocol serie_intera|finestre_2anni]
+Prints <= 10 lines; per-customer predictions in outputs/loo_pipeline_<protocol>_<mode>.csv.
 """
 from __future__ import annotations
 
@@ -40,14 +40,14 @@ from src.models import date as date_mod  # noqa: E402
 from src.models.capacity_common import daily_kw  # noqa: E402
 
 MODES = ["artefatti", "detect_loo", "tutto_loo"]
-PROTOCOLS = {"serie_intera": dict(rounds=1, days=100 * 366),  # finestra piu` lunga di ogni serie
-             "finestre_2anni": dict()}                        # default di validate.py
+PROTOCOLS = {"serie_intera": dict(rounds=1, days=100 * 366),  # window longer than any series
+             "finestre_2anni": dict()}                        # validate.py defaults
 DAY = pd.Timedelta(days=1)
 
 
 def make_featurize():
-    """Serie ritagliata di un cliente -> feature di detect, data di date.py, serie per capacity.
-    Memoria per (cliente, primo e ultimo epoch): le finestre sono le stesse in ogni modo."""
+    """Cropped series of one customer -> detect features, date from date.py, series for capacity.
+    Memoised by (customer, first and last epoch): the windows are the same in every mode."""
     memo: dict = {}
 
     def featurize(series: pd.DataFrame) -> dict:
@@ -57,7 +57,7 @@ def make_featurize():
             try:
                 d = str(date_mod.estimate(date_mod.daily_midday_ratio(series)))[:10]
                 pd.Timestamp(d)
-            except Exception:  # come inference.first_day
+            except Exception:  # as inference.first_day
                 d = pd.to_datetime(series["ts_epoch"].min(), unit="s", utc=True).strftime("%Y-%m-%d")
             memo[key] = {"cid": cid, "series": series, "date": d,
                          "det": detect.features_from_daily(detect.daily_profile(series))}
@@ -67,7 +67,7 @@ def make_featurize():
 
 
 def detect_windows(series: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
-    """Tabella di run_detect.py: finestre di 2 anni ogni 6 mesi di ogni cliente, con etichetta."""
+    """Table of run_detect.py: 2-year windows every 6 months for each customer, with label."""
     lab = labels.set_index("customer_id")
     rows = []
     for cid, g in series.groupby("customer_id", sort=True):
@@ -81,7 +81,7 @@ def detect_windows(series: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
 
 
 def capacity_table(series: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
-    """Come train_capacity.training_table (stesse finestre), con la colonna customer_id."""
+    """As train_capacity.training_table (same windows), with the customer_id column."""
     rng = np.random.default_rng(SEED)
     rows = []
     for r in labels[labels["pv_installed"]].itertuples():
@@ -102,7 +102,7 @@ def artifact_rule() -> tuple:
 
 
 def make_fit_predict(mode: str, win: pd.DataFrame | None = None, cap: pd.DataFrame | None = None):
-    """fit_predict per validate.py: la pipeline di inference.py con i parametri del modo."""
+    """fit_predict for validate.py: the inference.py pipeline with the parameters of the mode."""
     rules: dict = {}
     caps: dict = {}
 
@@ -110,7 +110,7 @@ def make_fit_predict(mode: str, win: pd.DataFrame | None = None, cap: pd.DataFra
         cid = f["cid"]
         if mode == "artefatti":
             rule = artifact_rule()
-        else:  # soglie ricalcolate sulle finestre degli altri clienti
+        else:  # thresholds refitted on the other customers' windows
             if cid not in rules:
                 rules[cid] = run_detect.fit_recent(win[win["customer_id"] != cid])
             rule = rules[cid]
@@ -137,11 +137,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--modes", default=",".join(MODES))
     ap.add_argument("--protocol", choices=list(PROTOCOLS), default="serie_intera")
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, then data/raw/pv_labels_dev.csv")
     a = ap.parse_args(argv)
     modes = a.modes.split(",")
     if set(modes) - set(MODES):
-        ap.error(f"modi: {MODES}")
+        ap.error(f"modes: {MODES}")
 
     series, labels = load_series(a.series), load_labels(find_labels(a.labels))
     labels = labels[labels["customer_id"].isin(series["customer_id"].unique())].reset_index(drop=True)

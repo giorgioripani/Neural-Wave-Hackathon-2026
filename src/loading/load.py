@@ -1,13 +1,13 @@
-"""Caricamento delle curve e cifre giornaliere, uguali per sviluppo e inference.py.
+"""Loading of the load curves and daily figures, identical for development and inference.py.
 
-Regole fissate qui una volta sola (valgono per tutti i moduli):
-- NESSUN cliente scartato (il filtro POD sta solo in prepare_data.py, per lo sviluppo).
-- customer_id testo; ordinamento per (customer_id, ts_epoch), mai per ts_local.
-- kWh negativi -> 0 (un prelievo non puo' essere negativo); kWh mancanti restano NaN.
-- Righe ripetute (stesso cliente e stesso ts_epoch): si tiene la prima.
-- Ora legale: i giorni sono giorni UTC presi da ts_epoch. Un giorno UTC ha sempre
-  96 quarti d'ora, quindi i giorni locali da 92 e 100 misure non creano problemi,
-  e le fasce orarie sono ore fisse UTC (regola della sfida: niente sole calcolato).
+Rules fixed here once (they apply to every module):
+- NO customer is dropped (the POD filter lives only in prepare_data.py, for development).
+- customer_id is text; sorting by (customer_id, ts_epoch), never by ts_local.
+- Negative kWh -> 0 (a withdrawal cannot be negative); missing kWh stay NaN.
+- Repeated rows (same customer and same ts_epoch): the first one is kept.
+- Daylight saving time: days are UTC days taken from ts_epoch. A UTC day always has
+  96 quarter-hours, so local days with 92 and 100 measurements cause no trouble,
+  and the time bands are fixed UTC hours (challenge rule: no computed sun position).
 """
 from pathlib import Path
 
@@ -15,7 +15,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-COLUMNS = {  # nome nel file -> nome dell'interfaccia
+COLUMNS = {  # name in the file -> interface name
     "customer_id": "customer_id",
     "timestamp_epoch": "ts_epoch",
     "energy_consumption_kwh": "kwh",
@@ -24,7 +24,7 @@ COLUMNS = {  # nome nel file -> nome dell'interfaccia
 TYPES = {"customer_id": "VARCHAR", "energy_consumption_kwh": "DOUBLE",
          "timestamp_local": "VARCHAR", "timestamp_epoch": "BIGINT"}
 
-# Fasce in ore UTC [inizio, fine). Mezzogiorno solare a Lugano ~ 11:25 UTC.
+# Bands in UTC hours [start, end). The midday band covers local solar noon (~11:25 UTC).
 MIDDAY_UTC = (10, 13)
 NIGHT_UTC = (0, 4)
 EVENING_UTC = (17, 21)
@@ -37,8 +37,8 @@ def _q(text: str) -> str:
 
 
 def _read_csv(con, path: Path) -> duckdb.DuckDBPyRelation:
-    """CSV con tipi dichiarati, letto una volta in una tabella: prova il punto
-    decimale, poi la virgola. Un valore non convertibile e' un errore, mai testo."""
+    """CSV with declared types, read once into a table: tries the decimal point,
+    then the comma. A value that cannot be converted is an error, never text."""
     types = ", ".join(f"{_q(c)}: {_q(t)}" for c, t in TYPES.items())
     last = None
     for dec in (".", ","):
@@ -48,13 +48,13 @@ def _read_csv(con, path: Path) -> duckdb.DuckDBPyRelation:
             return con.table("raw")
         except duckdb.Error as e:
             last = e
-    raise ValueError(f"CSV non leggibile con decimale '.' o ',': {last}")
+    raise ValueError(f"CSV not readable with decimal mark '.' or ',': {last}")
 
 
 def load_series(path, customers=None) -> pd.DataFrame:
-    """CSV (test o sviluppo) o Parquet di prepare_data.py ->
+    """CSV (test or development) or Parquet from prepare_data.py ->
     DataFrame customer_id (str), ts_epoch (int64), kwh (float), ts_local (str).
-    customers: lista facoltativa di customer_id da leggere (utile sul file grande)."""
+    customers: optional list of customer_id to read (useful on the large file)."""
     path = Path(path)
     con = duckdb.connect()
     con.execute("SET enable_progress_bar = false")
@@ -64,7 +64,7 @@ def load_series(path, customers=None) -> pd.DataFrame:
         rel = _read_csv(con, path)
     missing = set(COLUMNS) - set(rel.columns)
     if missing:
-        raise ValueError(f"Colonne mancanti in {path.name}: {sorted(missing)}")
+        raise ValueError(f"Missing columns in {path.name}: {sorted(missing)}")
 
     sel = ", ".join(f"{src} AS {dst}" for src, dst in COLUMNS.items() if src != "customer_id")
     where = ""
@@ -88,11 +88,11 @@ def _band_mean(kwh: pd.Series, hour: pd.Series, band) -> pd.Series:
 
 
 def daily_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Serie di load_series (uno o piu' clienti) -> una riga per cliente e giorno UTC:
-    customer_id, date, n (misure nel giorno, 96 se completo), total_kwh,
-    midday/night/evening (kWh medi per quarto d'ora nella fascia, NaN se vuota),
-    midday_night, midday_evening (rapporti), weekday (0 = lunedi'), month.
-    Medie e non somme: un quarto d'ora mancante non abbassa la cifra."""
+    """Series from load_series (one or more customers) -> one row per customer and UTC day:
+    customer_id, date, n (measurements in the day, 96 if complete), total_kwh,
+    midday/night/evening (mean kWh per quarter-hour in the band, NaN if empty),
+    midday_night, midday_evening (ratios), weekday (0 = Monday), month.
+    Means, not sums: a missing quarter-hour does not lower the figure."""
     ts = pd.to_datetime(df["ts_epoch"].astype("int64"), unit="s", utc=True)
     hour = ts.dt.hour
     kwh = df["kwh"].astype(float)
@@ -115,10 +115,10 @@ def daily_features(df: pd.DataFrame) -> pd.DataFrame:
     return out.replace([np.inf, -np.inf], np.nan)
 
 
-# --- Lettore tollerante per il CSV del test (usato da inference.py) -------------
+# --- Tolerant reader for the test CSV (used by inference.py) --------------------
 
 TEST_REQUIRED = ("customer_id", "timestamp_epoch", "energy_consumption_kwh")
-EPOCH_MS = 1e11  # epoch oltre questo valore: millisecondi
+EPOCH_MS = 1e11  # epoch above this value: milliseconds
 
 
 def _sniff(line: str) -> str:
@@ -127,7 +127,7 @@ def _sniff(line: str) -> str:
 
 
 def _all_line_ids(path: Path, sep: str, pos: int) -> set[str]:
-    """Id di OGNI riga di dati, anche quelle saltate da read_csv (campi in piu`)."""
+    """Ids of EVERY data row, including those skipped by read_csv (extra fields)."""
     lines = pd.read_csv(path, sep="\x01", header=None, skiprows=1, dtype=str, encoding="utf-8-sig",
                         keep_default_na=False, quoting=3)[0]
     ids = lines.str.split(sep).str[pos].fillna("").str.strip().str.strip('"')
@@ -135,17 +135,17 @@ def _all_line_ids(path: Path, sep: str, pos: int) -> set[str]:
 
 
 def load_test(path, verbose: bool = True) -> tuple[pd.DataFrame, list[str]]:
-    """CSV del test -> (df, all_ids). Non solleva errori per un singolo valore sporco.
+    """Test CSV -> (df, all_ids). Never raises for a single dirty value.
 
     df: customer_id (str), energy_consumption_kwh, timestamp_epoch, timestamp_local
-    (nomi del file) e kwh, ts_epoch (int64), ts_local (nomi dell'interfaccia),
-    ordinato per (customer_id, ts_epoch). all_ids: tutti gli id non vuoti del file,
-    PRIMA della pulizia, ordinati: ogni cliente deve avere la sua riga di uscita.
-    Regole: separatore dell'intestazione e dei dati rilevati a parte, BOM tolto,
-    id con trim, epoch non valido o vuoto -> riga tolta, epoch in millisecondi -> /1000,
-    kWh non numerico -> NaN (riga tenuta), virgola decimale accettata, kWh negativi -> 0,
-    righe ripetute (cliente, epoch) -> la prima, righe con campi in piu` saltate.
-    Stampa solo conteggi."""
+    (file names) and kwh, ts_epoch (int64), ts_local (interface names),
+    sorted by (customer_id, ts_epoch). all_ids: every non-empty id of the file,
+    BEFORE cleaning, sorted: every customer must get its output row.
+    Rules: header and data separators detected separately, BOM removed,
+    ids trimmed, invalid or empty epoch -> row dropped, epoch in milliseconds -> /1000,
+    non-numeric kWh -> NaN (row kept), decimal comma accepted, negative kWh -> 0,
+    repeated rows (customer, epoch) -> the first one, rows with extra fields skipped.
+    Prints counts only."""
     path = Path(path)
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         header = f.readline()
@@ -155,16 +155,16 @@ def load_test(path, verbose: bool = True) -> tuple[pd.DataFrame, list[str]]:
     names = [c.strip().strip('"').lower() for c in header.rstrip("\r\n").split(head_sep)]
     missing = [c for c in TEST_REQUIRED if c not in names]
     if missing:
-        raise ValueError(f"Colonne mancanti in {path.name}: {missing}")
+        raise ValueError(f"Missing columns in {path.name}: {missing}")
     opts = dict(sep=data_sep, header=None, skiprows=1, names=names, encoding="utf-8-sig",
                 skip_blank_lines=True, engine="python" if len(data_sep) > 1 else "c")
     malformed = False
     if not first:
         raw = pd.DataFrame({c: pd.Series(dtype=object) for c in names})
     else:
-        try:  # via veloce: file pulito, tipi letti da pandas (come il vecchio read_test)
+        try:  # fast path: clean file, types read by pandas (like the old read_test)
             raw = pd.read_csv(path, dtype={"customer_id": str, "timestamp_local": str}, **opts)
-        except Exception:  # righe con campi in piu`: tutto come testo, righe malformate saltate
+        except Exception:  # rows with extra fields: everything as text, malformed rows skipped
             raw = pd.read_csv(path, dtype=str, keep_default_na=False, on_bad_lines="skip", **opts)
             malformed = True
     if "timestamp_local" not in raw.columns:
@@ -176,7 +176,7 @@ def load_test(path, verbose: bool = True) -> tuple[pd.DataFrame, list[str]]:
     all_ids = sorted(ids)
 
     def numeric(col: pd.Series, comma: bool = False) -> tuple[pd.Series, int]:
-        """Colonna -> float (NaN se non numerico) e numero di valori non vuoti non convertibili."""
+        """Column -> float (NaN if not numeric) and number of non-empty values that could not be converted."""
         if pd.api.types.is_numeric_dtype(col):
             x = col.astype(float)
             return x.where(np.isfinite(x)), 0
@@ -205,9 +205,9 @@ def load_test(path, verbose: bool = True) -> tuple[pd.DataFrame, list[str]]:
     df["ts_local"] = df["timestamp_local"]
     if verbose:
         n_empty = len(set(all_ids) - set(df["customer_id"]))
-        print(f"Letto {path.name}: separatore {data_sep!r}, {len(df)} righe, {len(all_ids)} clienti")
+        print(f"Read {path.name}: separator {data_sep!r}, {len(df)} rows, {len(all_ids)} customers")
         if (~keep).sum() or n_dup or bad_kwh or ms.sum() or n_empty:
-            print(f"Pulizia: {int((~keep).sum())} righe senza id o epoch valido tolte, {n_dup} ripetute tolte, "
-                  f"{bad_kwh} kWh non numerici -> NaN, {int(ms.sum())} epoch in ms, "
-                  f"{n_empty} clienti senza righe valide")
+            print(f"Cleaning: {int((~keep).sum())} rows without a valid id or epoch dropped, {n_dup} repeated dropped, "
+                  f"{bad_kwh} non-numeric kWh -> NaN, {int(ms.sum())} epochs in ms, "
+                  f"{n_empty} customers without valid rows")
     return df, all_ids

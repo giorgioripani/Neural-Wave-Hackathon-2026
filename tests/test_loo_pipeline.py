@@ -50,6 +50,6 @@ def test_full_series_protocol_uses_whole_series():
 
     summary, _ = validate(series, lab, featurize, lambda tr, tl, f: {"pv_installed": False},
                           **lp.PROTOCOLS["serie_intera"])
-    assert len(summary) == 1  # deterministico: un giro
+    assert len(summary) == 1  # deterministic: one round
     full = series.groupby("customer_id").size()
     assert all(n == full[c] for c, n in seen) and len(seen) == len(full)

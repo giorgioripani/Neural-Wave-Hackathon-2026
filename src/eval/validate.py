@@ -1,28 +1,28 @@
-"""Validazione a un cliente alla volta (leave-one-out) su finestre di 2 anni, come il test.
+"""Leave-one-customer-out validation on 2-year windows (robustness check).
 
-Per ogni giro (ROUNDS, seed 42) ogni cliente viene ritagliato a UNA finestra di DAYS
-giorni presa dentro i suoi dati:
-- con fotovoltaico: la data vera cade in un punto casuale della finestra (tra il 10% e
-  il 90%), poi la finestra viene spostata quanto serve per stare dentro i dati;
-- senza fotovoltaico: finestra in un punto casuale dei dati.
-Posizione casuale e non fissa: un modello che "indovina la meta' della finestra" non
-deve essere premiato. Il baseline lo mostra (D del baseline = quanto vale indovinare).
-Se una serie e' piu' corta di DAYS si usa tutta.
+In every round (ROUNDS, seed 42) each customer is cropped to ONE window of DAYS
+days taken inside its data:
+- with PV: the true date falls at a random point of the window (between 10% and
+  90%), then the window is shifted as needed to stay inside the data;
+- without PV: window at a random point of the data.
+Random, not fixed, position: a model that "guesses the middle of the window" must
+not be rewarded. The baseline shows it (baseline D = what guessing is worth).
+If a series is shorter than DAYS it is used whole.
 
-Etichetta della finestra: se la data vera cade dopo la fine della finestra, in quella
-finestra il cliente non ha ancora il fotovoltaico -> FALSE.
+Window label: if the true date falls after the end of the window, in that window
+the customer does not have PV yet -> FALSE.
 
-In ogni giro: il modello si addestra sugli altri clienti (le loro finestre dello stesso
-giro) e prevede il cliente lasciato fuori. Punteggio ufficiale per giro, poi media e
-deviazione standard tra i giri.
+In every round: the model is trained on the other customers (their windows of the same
+round) and predicts the left-out customer. Official score per round, then mean and
+standard deviation across rounds.
 
-Interfaccia per chi valida un modello:
-    featurize(serie_di_un_cliente) -> qualsiasi oggetto (default: daily_features)
+Interface for validating a model:
+    featurize(series_of_one_customer) -> any object (default: daily_features)
     fit_predict(train_feats: {cid: feat}, train_labels: DataFrame, test_feat)
-        -> {"pv_installed": bool, "pv_installation_date": "AAAA-MM-GG", "pv_capacity_kwp": float}
-    validate(series, labels, featurize, fit_predict) -> (riassunto, previsioni per cliente)
+        -> {"pv_installed": bool, "pv_installation_date": "YYYY-MM-DD", "pv_capacity_kwp": float}
+    validate(series, labels, featurize, fit_predict) -> (summary, per-customer predictions)
 
-Uso (baseline, per avere il punteggio minimo da battere):
+Usage (baseline, the minimum score to beat):
     python src/eval/validate.py data/clean/dev.parquet data/pv_labels_dev.csv
 """
 import sys
@@ -44,8 +44,8 @@ DAY = pd.Timedelta(days=1)
 
 
 def window(first: pd.Timestamp, end: pd.Timestamp, true_date, pos: float, days: int = DAYS):
-    """Finestra [inizio, fine) di `days` giorni dentro [first, end).
-    Con true_date: true_date a frazione pos della finestra; senza: pos lungo i dati."""
+    """Window [start, end) of `days` days inside [first, end).
+    With true_date: true_date at fraction pos of the window; without: pos along the data."""
     span = (end - first).days
     if span <= days:
         return first, end
@@ -58,7 +58,7 @@ def window(first: pd.Timestamp, end: pd.Timestamp, true_date, pos: float, days: 
 
 
 def window_label(row: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> dict:
-    """Etichetta del cliente vista dentro la finestra [start, end)."""
+    """Customer label as seen inside the window [start, end)."""
     lab = row.to_dict()
     if lab["pv_installed"] and pd.notna(lab["pv_installation_date"]) and lab["pv_installation_date"] >= end:
         lab.update(pv_installed=False, pv_installation_date=pd.NaT, pv_capacity_kwp=np.nan)
@@ -73,8 +73,8 @@ def crop(series: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.Dat
 
 def validate(series: pd.DataFrame, labels: pd.DataFrame, featurize=daily_features, fit_predict=None,
              rounds: int = ROUNDS, days: int = DAYS, seed: int = SEED):
-    """Restituisce (riassunto, previsioni). riassunto: una riga per giro con F1, D, P,
-    score, tp, fp, fn. previsioni: una riga per giro e cliente (finestra, etichetta, previsione)."""
+    """Returns (summary, predictions). summary: one row per round with F1, D, P,
+    score, tp, fp, fn. predictions: one row per round and customer (window, label, prediction)."""
     rng = np.random.default_rng(seed)
     labels = labels[labels["customer_id"].isin(series["customer_id"].unique())].reset_index(drop=True)
     groups = {cid: s for cid, s in series.groupby("customer_id", sort=False)}
@@ -113,8 +113,8 @@ def validate(series: pd.DataFrame, labels: pd.DataFrame, featurize=daily_feature
 
 
 def baseline(train_feats, train_labels, test_feat) -> dict:
-    """Punteggio minimo da battere: sempre TRUE, data = meta' della finestra,
-    kWp = mediana dei kWp di addestramento."""
+    """Minimum score to beat: always TRUE, date = middle of the window,
+    kWp = median of the training kWp."""
     d = test_feat["date"]
     mid = d.min() + (d.max() - d.min()) / 2
     kwp = float(train_labels.loc[train_labels["pv_installed"], "pv_capacity_kwp"].median())
@@ -123,7 +123,7 @@ def baseline(train_feats, train_labels, test_feat) -> dict:
 
 def report(summary: pd.DataFrame) -> str:
     m, s = summary.mean(numeric_only=True), summary.std(numeric_only=True)
-    return (f"{len(summary)} giri: punteggio {m['score']:.2f} ± {s['score']:.2f}  "
+    return (f"{len(summary)} rounds: score {m['score']:.2f} ± {s['score']:.2f}  "
             f"F1 {m['F1']:.3f}  D {m['D']:.3f}  P {m['P']:.3f}  (TP {m['tp']:.1f} FP {m['fp']:.1f} FN {m['fn']:.1f})")
 
 
@@ -135,9 +135,9 @@ def main() -> int:
     out = ROOT / "outputs" / "validate_baseline.csv"
     out.parent.mkdir(exist_ok=True)
     preds.to_csv(out, index=False)
-    print("Baseline (sempre TRUE, data a meta' finestra, kWp mediano)")
+    print("Baseline (always TRUE, date in the middle of the window, median kWp)")
     print(report(summary))
-    print(f"Previsioni per cliente: {out.relative_to(ROOT)}")
+    print(f"Per-customer predictions: {out.relative_to(ROOT)}")
     return 0
 
 

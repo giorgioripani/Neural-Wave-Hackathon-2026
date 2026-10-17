@@ -1,15 +1,15 @@
-"""Dati SINTETICI per provare il codice senza toccare dati AIL.
+"""SYNTHETIC data to test the code without touching AIL data.
 
-Non imitano i clienti reali: curva piatta con rumore e, per i clienti "pv",
-un calo a mezzogiorno dopo una data scelta a caso. Servono solo a verificare
-che il codice giri (forme, colonne, ora legale), non a valutare la qualita`.
+They do not imitate real customers: flat curve with noise and, for the "pv" customers,
+a midday drop after a randomly chosen date. They only check that the code
+runs (shapes, columns, daylight saving time), not the quality.
 """
 import numpy as np
 import pandas as pd
 
 
 def make_synthetic(n_customers: int = 6, start="2023-01-01", days: int = 730, seed: int = 42):
-    """Ritorna (serie, etichette). Colonne come nel dataset: customer_id,
+    """Returns (series, labels). Columns as in the dataset: customer_id,
     energy_consumption_kwh, timestamp_local, timestamp_epoch."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range(start, periods=days * 96, freq="15min", tz="UTC")

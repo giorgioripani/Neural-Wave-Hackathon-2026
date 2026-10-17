@@ -16,7 +16,7 @@ START = "2023-01-01"
 
 
 def make_series(days=730, cid="POD0007", seed=42):
-    """SINTETICA, UTC: 0,2 kWh a ogni quarto d'ora piu` rumore."""
+    """SYNTHETIC, UTC: 0.2 kWh every quarter-hour plus noise."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range(START, periods=days * 96, freq="15min", tz="UTC")
     return pd.DataFrame({"customer_id": cid, "ts_epoch": idx.astype("int64") // 10**9,
@@ -39,14 +39,14 @@ def fake_detect(monkeypatch):
 
 def test_short_segment_insufficient(fake_detect):
     calls = fake_detect(0.9)
-    assert refine_date0(make_series(), "2023-03-01") == ("2023-03-01", "tratto_insufficiente")  # 59 giorni
-    assert refine_date0(make_series(), "2023-01-01") == ("2023-01-01", "tratto_insufficiente")  # niente prima
+    assert refine_date0(make_series(), "2023-03-01") == ("2023-03-01", "tratto_insufficiente")  # 59 days
+    assert refine_date0(make_series(), "2023-01-01") == ("2023-01-01", "tratto_insufficiente")  # nothing before
     assert calls == {}
 
 
 def test_no_summer_insufficient(fake_detect):
     fake_detect(0.9)
-    # 1 gennaio - 20 maggio: 139 giorni ma solo 19 giorni fra maggio e agosto
+    # 1 January - 20 May: 139 days but only 19 days between May and August
     assert refine_date0(make_series(), "2023-05-20") == ("2023-05-20", "tratto_insufficiente")
 
 
@@ -66,8 +66,8 @@ def test_summer_days_with_nan_not_counted(fake_detect):
 def test_detect_outcomes(fake_detect, p, expected):
     calls = fake_detect(p)
     assert refine_date0(make_series(), "2023-10-01") == expected
-    assert calls["ids"] == {"POD0007"}  # stesso customer_id
-    assert calls["last"] < pd.Timestamp("2023-10-01", tz="UTC")  # solo il tratto prima di date0
+    assert calls["ids"] == {"POD0007"}  # same customer_id
+    assert calls["last"] < pd.Timestamp("2023-10-01", tz="UTC")  # only the stretch before date0
 
 
 def test_without_customer_id_column(fake_detect):
@@ -83,7 +83,7 @@ def test_real_detect_runs():
 
 
 def test_missing_proba_matches_detect():
-    # il valore di riserva di detect: feature mancante -> DETECT_MISSING_PROBA
+    # the detect fallback value: missing feature -> DETECT_MISSING_PROBA
     out = detect.proba_from_feature(pd.Series([np.nan]), 1, 0.0, 1.0)
     assert out.iloc[0] == extensions.DETECT_MISSING_PROBA
 
@@ -103,7 +103,7 @@ def test_inject_pipeline_refine(fake_detect):
     fake_detect(0.9)
     s = make_series()[["ts_epoch", "kwh"]]
     d0, _, reest, _, reason, start = run_pipeline(s, thresholds=(0.05,), refine=True)
-    assert d0 == reest  # date0 non cambia con refine
+    assert d0 == reest  # date0 does not change with refine
     assert (start, reason) == refine_date0(s, d0)
     assert run_pipeline(s, thresholds=(0.05,))[4:] == ("", d0)
 
@@ -115,12 +115,12 @@ def test_inject_refine_requires_reestimate(monkeypatch):
         inject_ext_dev.main()
 
 
-# --- refine per le estensioni: PV gia` presente all'inizio, estensione al giorno EXT ---
+# --- refine for the extensions: PV already present at the start, extension on day EXT ---
 EXT = 400
 
 
 def make_pv_from_start(cid="POD0007"):
-    """SINTETICA, UTC: mezzogiorno 0,2 kWh (fotovoltaico gia` presente) e 0,1 dal giorno EXT."""
+    """SYNTHETIC, UTC: midday 0.2 kWh (PV already present) and 0.1 from day EXT."""
     from test_extensions import make_series as steps_series
     s = steps_series([(0, 0.2), (EXT, 0.1)])
     return s.assign(customer_id=cid)
@@ -142,12 +142,12 @@ def test_kwp_ratio_install_at_first_day_not_estimable():
 def test_predict_extensions_refined(fake_detect):
     from src.models.extensions import predict_extensions, predict_extensions_refined
     s = make_pv_from_start()
-    date0 = _day(EXT)  # la v2 vede solo il gradino dell'estensione
+    date0 = _day(EXT)  # v2 only sees the extension's step
     assert predict_extensions(s, date0, 4.0) == []
-    fake_detect(0.9)  # detect vede gia` il fotovoltaico prima di date0
+    fake_detect(0.9)  # detect already sees PV before date0
     got = predict_extensions_refined(s, date0, 4.0)
     assert len(got) == 1 and abs((pd.Timestamp(got[0]["date"]) - pd.Timestamp(date0)).days) <= 3
-    assert got[0]["kwp_after"] == 4.4  # s1 non stimabile: limite inferiore 1,1 x kwp0
+    assert got[0]["kwp_after"] == 4.4  # s1 not estimable: lower bound 1.1 x kwp0
     fake_detect(0.1)
     assert predict_extensions_refined(s, date0, 4.0) == predict_extensions(s, date0, 4.0)
 
@@ -168,13 +168,13 @@ def test_run_ext_dev_refine(tmp_path, monkeypatch, capsys, fake_detect):
             "--ext-labels", str(tmp_path / "e.csv"), "--out", str(tmp_path / "o.csv"), "--window", "full"]
     monkeypatch.setattr(sys, "argv", args)
     assert run_ext_dev.main() == 0
-    assert "Estensioni previste:     0" in capsys.readouterr().out  # senza refine: ricerca da date0 + 60
+    assert "Predicted extensions:    0" in capsys.readouterr().out  # without refine: search from date0 + 60
     monkeypatch.setattr(sys, "argv", args + ["--refine"])
     assert run_ext_dev.main() == 0
     out = capsys.readouterr().out
     assert len(out.strip().splitlines()) <= 10
-    assert "motivi refine: pv_gia_presente 1" in out and "Estensioni previste:     1" in out
-    assert "Falsi allarmi (clienti): 0" in out and "trovata entro 30 gg: si" in out
+    assert "refine reasons: pv_gia_presente 1" in out and "Predicted extensions:    1" in out
+    assert "False alarms (customers): 0" in out and "found within 30 d: yes" in out
     res = pd.read_csv(tmp_path / "o.csv")
     assert res["date0_ext"].iloc[0] == "2023-01-01" and res["date0"].iloc[0] != "2023-01-01"
 
@@ -193,4 +193,4 @@ def test_inject_originals_use_refine(fake_detect):
     _, _, orig_plain = evaluate_customer("POD0001", inj_series(), day_ts(INSTALL_DAY), 4.0,
                                          np.random.default_rng(42), thresholds=(0.05,), reestimate_date0=True)
     assert all(o["refine_reason"] == "" for o in orig_plain)
-    assert [o["date0"] for o in orig] == [o["date0"] for o in orig_plain]  # date0 non cambia
+    assert [o["date0"] for o in orig] == [o["date0"] for o in orig_plain]  # date0 does not change

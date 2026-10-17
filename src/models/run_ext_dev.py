@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""Prova delle estensioni (bonus) sui clienti di sviluppo con pv_installed=TRUE.
+"""Test of the extensions (bonus) on the development customers with pv_installed=TRUE.
 
-Per ogni cliente, con --window last730 (default) solo gli ultimi 730 giorni dei
-suoi dati (come demo/make_fake_test.py), con --window full tutta la serie: date0 con
-date.estimate, kwp0 con capacity.estimate (la stessa usata da inference.py),
-poi extensions.estimate_extensions. Nessun parametro scelto sui risultati.
+For each customer, with --window last730 (default) only the last 730 days of
+its data (as demo/make_fake_test.py), with --window full the whole series: date0 with
+date.estimate, kwp0 with capacity.estimate (the same used by inference.py),
+then extensions.estimate_extensions. No parameter chosen on the results.
 
-Uso (dalla radice del repo):
+Usage (from the repository root):
     python src/models/run_ext_dev.py [--series data/clean/dev.parquet]
         [--labels data/pv_labels_dev.csv] [--ext-labels data/pv_extensions_labels_dev.csv]
-        [--out outputs/ext_dev.csv] [--window full|last730] [--min-tail GIORNI] [--refine]
+        [--out outputs/ext_dev.csv] [--window full|last730] [--min-tail DAYS] [--refine]
 
---min-tail: passato a estimate_extensions come min_tail_days (default 0).
---refine: le estensioni si cercano da date0_ext, motivo = refine_date0(serie, date0)
-(date0 e kwp0 restano quelli di date.estimate e capacity.estimate); si stampa il
-conteggio dei motivi accanto ai clienti analizzati.
---threshold: miglioramento minimo dell'errore (default EXT_THRESHOLD = 0.05, quello del metodo).
+--min-tail: passed to estimate_extensions as min_tail_days (default 0).
+--refine: the extensions are searched from date0_ext, reason = refine_date0(series, date0)
+(date0 and kwp0 stay those of date.estimate and capacity.estimate); the count of the
+reasons is printed next to the analysed customers.
+--threshold: minimum improvement of the error (default EXT_THRESHOLD = 0.05, the method's one).
 
-Diagnosi (solo conteggi): clienti per esito della prima ricerca (eccezione con il
-solo tipo, coda corta, gradino verso l'alto, sotto soglia, vicino alla fine,
-accettato), statistiche del miglioramento del miglior gradino candidato, e il
-motivo per cui un'estensione vera non ha finestra ("?").
+Diagnostics (counts only): customers by outcome of the first search (exception with
+its type only, short tail, step up, below threshold, close to the end,
+accepted), statistics of the improvement of the best candidate step, and the
+reason why a true extension has no window ("?").
 
-Salva una riga per estensione prevista (o una riga vuota per cliente) in --out.
-Stampa solo: clienti, estensioni previste, falsi allarmi (clienti senza estensione
-vera con almeno una prevista) e, per ogni estensione vera, trovata entro 30 giorni,
-se cade dentro la finestra, errore in giorni e errore percentuale sui kWp
-(estensione prevista piu` vicina).
+Saves one row per predicted extension (or an empty row per customer) in --out.
+Prints only: customers, predicted extensions, false alarms (customers without a true
+extension with at least one predicted) and, for every true extension, found within 30 days,
+whether it falls inside the window, error in days and percentage error on the kWp
+(closest predicted extension).
 """
 import argparse
 import csv
@@ -48,19 +48,19 @@ from src.models.extensions import (EXT_THRESHOLD, daily_ext_features, estimate_e
 
 SEED = 42
 MATCH_DAYS = 30
-EXT_DATE_FORMAT = "%Y-%m-%d"  # formato di pv_extensions_labels_dev.csv (es. 2025-11-13)
-WINDOW_S = 730 * 86400  # stessa finestra di demo/make_fake_test.py
+EXT_DATE_FORMAT = "%Y-%m-%d"  # format of pv_extensions_labels_dev.csv (YYYY-MM-DD)
+WINDOW_S = 730 * 86400  # same window as demo/make_fake_test.py
 
 
 def cut_window(s: pd.DataFrame, window: str) -> pd.DataFrame:
-    """last730: tiene le misure con ts_epoch > ultimo ts_epoch - 730 giorni; full: tutto."""
+    """last730: keeps the measurements with ts_epoch > last ts_epoch - 730 days; full: everything."""
     if window == "full":
         return s
     return s[s["ts_epoch"] > s["ts_epoch"].max() - WINDOW_S]
 
 
 def why_no_window(cid, ext_date, lab_ids, pos_ids, series_ids, analysed) -> str:
-    """Motivo per cui un'estensione vera non ha finestra (solo una categoria, niente valori)."""
+    """Reason why a true extension has no window (a category only, no values)."""
     if pd.isna(ext_date):
         return "data_non_letta"
     if cid in analysed:
@@ -78,29 +78,29 @@ def why_no_window(cid, ext_date, lab_ids, pos_ids, series_ids, analysed) -> str:
 def gain_stats(g: pd.Series) -> str:
     g = g.dropna()
     if g.empty:
-        return "nessun gradino calcolato"
+        return "no step computed"
     q = g.quantile([0, 0.5, 0.9, 1]).to_numpy()
-    return f"n {len(g)}, min {q[0]:.3f}, mediana {q[1]:.3f}, p90 {q[2]:.3f}, max {q[3]:.3f}"
+    return f"n {len(g)}, min {q[0]:.3f}, median {q[1]:.3f}, p90 {q[2]:.3f}, max {q[3]:.3f}"
 
 
 def load_ext_labels(path) -> pd.DataFrame:
-    """Etichette delle estensioni -> customer_id, ext_date, kwp_after.
+    """Extension labels -> customer_id, ext_date, kwp_after.
 
-    Separatore rilevato RIGA PER RIGA (nel file di sviluppo l'intestazione usa , e
-    i dati ;): se la riga contiene ; si usa ;, altrimenti ,. Con ; una virgola nei
-    kWp e` il decimale. La data si legge con EXT_DATE_FORMAT: se un valore non e`
-    in quel formato si alza ValueError (niente righe saltate). Anche una riga con
-    un numero di campi diverso dall'intestazione alza ValueError."""
+    Separator detected LINE BY LINE (in the development file the header uses , and
+    the data ;): if the line contains ; then ; is used, otherwise ,. With ; a comma in
+    the kWp is the decimal mark. The date is read with EXT_DATE_FORMAT: if a value is not
+    in that format ValueError is raised (no rows skipped). A row with a number of
+    fields different from the header also raises ValueError."""
     with open(path, newline="", encoding="utf-8-sig") as f:
         lines = [ln.rstrip("\r\n") for ln in f if ln.strip()]
     if not lines:
-        raise ValueError(f"{path}: file vuoto")
+        raise ValueError(f"{path}: empty file")
     rows = [next(csv.reader([ln], delimiter=";" if ";" in ln else ",")) for ln in lines]
     header = [c.strip() for c in rows[0]]
     bad = [i for i, r in enumerate(rows[1:], start=2) if len(r) != len(header)]
     if bad:
-        raise ValueError(f"{path}: {len(bad)} righe con un numero di campi diverso "
-                         f"dall'intestazione ({len(header)}), prima alla riga {bad[0]}")
+        raise ValueError(f"{path}: {len(bad)} rows with a number of fields different "
+                         f"from the header ({len(header)}), first at row {bad[0]}")
     lab = pd.DataFrame(rows[1:], columns=header, dtype=str)
     date_col = next(c for c in lab.columns if "date" in c.lower())
     kwp_col = next(c for c in lab.columns if "kwp" in c.lower())
@@ -109,29 +109,29 @@ def load_ext_labels(path) -> pd.DataFrame:
         ext_date = pd.to_datetime(raw, format=EXT_DATE_FORMAT, errors="raise")
     except (ValueError, TypeError) as e:
         bad = pd.to_datetime(raw, format=EXT_DATE_FORMAT, errors="coerce").isna()
-        # forma del primo valore non letto (cifre -> 9, lettere -> a), senza il valore
+        # shape of the first unread value (digits -> 9, letters -> a), without the value
         shape = re.sub(r"[A-Za-z]", "a", re.sub(r"\d", "9", str(raw[bad].iloc[0])))
-        raise ValueError(f"{path}: colonna {date_col!r}, {int(bad.sum())} date su {len(raw)} "
-                         f"non nel formato {EXT_DATE_FORMAT} (prima: forma {shape!r})") from e
+        raise ValueError(f"{path}: column {date_col!r}, {int(bad.sum())} dates out of {len(raw)} "
+                         f"not in the format {EXT_DATE_FORMAT} (first: shape {shape!r})") from e
     out = pd.DataFrame({
         "customer_id": lab["customer_id"].str.strip(),
         "ext_date": ext_date,
         "kwp_after": pd.to_numeric(lab[kwp_col].str.replace(",", ".", regex=False), errors="coerce"),
     })
-    out.attrs["cols"] = [date_col, kwp_col]  # nomi di colonna, non valori: per la diagnosi
+    out.attrs["cols"] = [date_col, kwp_col]  # column names, not values: for the diagnostics
     return out
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
-    ap.add_argument("--ext-labels", default=None, help="default: data/pv_extensions_labels_dev.csv, poi data/raw/")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, then data/raw/pv_labels_dev.csv")
+    ap.add_argument("--ext-labels", default=None, help="default: data/pv_extensions_labels_dev.csv, then data/raw/")
     ap.add_argument("--out", default="outputs/ext_dev.csv")
     ap.add_argument("--window", choices=["full", "last730"], default="last730")
-    ap.add_argument("--min-tail", type=int, default=0, help="min_tail_days di estimate_extensions")
-    ap.add_argument("--refine", action="store_true", help="estensioni cercate da refine_date0(serie, date0)")
-    ap.add_argument("--threshold", type=float, default=EXT_THRESHOLD, help="soglia (b) di estimate_extensions")
+    ap.add_argument("--min-tail", type=int, default=0, help="min_tail_days of estimate_extensions")
+    ap.add_argument("--refine", action="store_true", help="extensions searched from refine_date0(series, date0)")
+    ap.add_argument("--threshold", type=float, default=EXT_THRESHOLD, help="threshold (b) of estimate_extensions")
     a = ap.parse_args()
     np.random.seed(SEED)
 
@@ -154,7 +154,7 @@ def main() -> int:
             date0_ext, why = refine_date0(s, date0) if a.refine else (date0, "")
             exts = estimate_extensions(daily, date0_ext, kwp0, min_tail_days=a.min_tail,
                                        threshold=a.threshold, diag=diag)
-        except Exception as e:  # diagnosi: solo il tipo, senza valori
+        except Exception as e:  # diagnostics: only the type, without values
             diags.append({"customer_id": cid, "reason": f"eccezione_{type(e).__name__}", "best_gain": np.nan})
             continue
         diags.append({"customer_id": cid, **diag})
@@ -175,38 +175,38 @@ def main() -> int:
     pred = res[res["date"] != ""]
     with_ext = set(ext_lab["customer_id"])
     win = res.groupby("customer_id")[["win_start", "win_end"]].first()
-    print(f"Finestra: {a.window}, min_tail: {a.min_tail}, soglia: {a.threshold}, refine: {a.refine}")
+    print(f"Window: {a.window}, min_tail: {a.min_tail}, threshold: {a.threshold}, refine: {a.refine}")
     motivi = ""
     if a.refine:
         cnt = res.drop_duplicates("customer_id")["refine_reason"].value_counts()
-        motivi = " (motivi refine: " + ", ".join(f"{k} {v}" for k, v in cnt.items()) + ")"
-    print(f"Clienti analizzati:      {res['customer_id'].nunique()}{motivi}")
-    print(f"Estensioni previste:     {len(pred)}")
-    print(f"Falsi allarmi (clienti): {pred.loc[~pred['customer_id'].isin(with_ext), 'customer_id'].nunique()}")
-    print("Esiti (clienti): " + ", ".join(f"{k} {v}" for k, v in dg["reason"].value_counts().items()))
-    print(f"Miglior gradino, guadagno: {gain_stats(dg['best_gain'])}")
+        motivi = " (refine reasons: " + ", ".join(f"{k} {v}" for k, v in cnt.items()) + ")"
+    print(f"Customers analysed:      {res['customer_id'].nunique()}{motivi}")
+    print(f"Predicted extensions:    {len(pred)}")
+    print(f"False alarms (customers): {pred.loc[~pred['customer_id'].isin(with_ext), 'customer_id'].nunique()}")
+    print("Outcomes (customers): " + ", ".join(f"{k} {v}" for k, v in dg["reason"].value_counts().items()))
+    print(f"Best step, gain: {gain_stats(dg['best_gain'])}")
     why = [why_no_window(c, d, set(lab["customer_id"]), set(pos), set(groups), set(win.index))
            for c, d in zip(ext_lab["customer_id"], ext_lab["ext_date"])]
-    print(f"Etichette estensioni: {len(ext_lab)} righe; colonne lette {list(ext_lab.attrs.get('cols', []))}; "
-          + "finestra: " + ", ".join(f"{k} {v}" for k, v in pd.Series(why, dtype=str).value_counts().items()))
+    print(f"Extension labels: {len(ext_lab)} rows; columns read {list(ext_lab.attrs.get('cols', []))}; "
+          + "window: " + ", ".join(f"{k} {v}" for k, v in pd.Series(why, dtype=str).value_counts().items()))
     for i, (_, t) in enumerate(ext_lab.iterrows()):
         if i >= 2:
-            print(f"... altre {len(ext_lab) - i} estensioni vere in {a.out}")
+            print(f"... {len(ext_lab) - i} more true extensions in {a.out}")
             break
         p = pred[pred["customer_id"] == t["customer_id"]]
         inside = "?"
         if t["customer_id"] in win.index and pd.notna(t["ext_date"]):
             w0, w1 = win.loc[t["customer_id"]]
-            inside = "si" if pd.Timestamp(w0) <= t["ext_date"] <= pd.Timestamp(w1) else "no"
-        head = f"Estensione vera {i + 1} (dentro finestra: {inside}): trovata entro {MATCH_DAYS} gg:"
+            inside = "yes" if pd.Timestamp(w0) <= t["ext_date"] <= pd.Timestamp(w1) else "no"
+        head = f"True extension {i + 1} (inside window: {inside}): found within {MATCH_DAYS} d:"
         if p.empty or pd.isna(t["ext_date"]):
-            print(f"{head} no (nessuna prevista)")
+            print(f"{head} no (none predicted)")
             continue
         err = (pd.to_datetime(p["date"]) - t["ext_date"]).dt.days
         j = err.abs().idxmin()
         kerr = abs(p.loc[j, "kwp_after"] - t["kwp_after"]) / t["kwp_after"] * 100
-        ok = "si" if abs(err[j]) <= MATCH_DAYS else "no"
-        print(f"{head} {ok}, errore {err[j]:+d} gg, kWp {kerr:.1f}%")
+        ok = "yes" if abs(err[j]) <= MATCH_DAYS else "no"
+        print(f"{head} {ok}, error {err[j]:+d} d, kWp {kerr:.1f}%")
     return 0
 
 

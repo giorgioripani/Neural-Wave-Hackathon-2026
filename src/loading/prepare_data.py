@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Pulisce le curve di carico seguendo l'istruzione del professore.
+"""Cleans the load curves following the organisers' instruction.
 
-Tiene solo i record con  customer_id LIKE 'POD%'  (esclude quindi anche i
-customer_id nulli) e salva un file Parquet nell'ordine del CSV (load_series
-ordina poi per cliente e tempo; --sort per ordinare gia' qui, solo su file piccoli).
-Il CSV viene letto da DuckDB a flusso, con un tetto di RAM (--memory-limit):
-se serve piu' memoria DuckDB usa file temporanei accanto all'uscita.
-Il Parquet viene scritto su un file .tmp e rinominato solo se tutto e' andato
-bene: un'esecuzione interrotta non lascia mai un file di uscita a meta'.
+Keeps only the records with  customer_id LIKE 'POD%'  (so it also drops the
+null customer_id) and saves a Parquet file in the CSV order (load_series then
+sorts by customer and time; --sort to sort already here, only on small files).
+The CSV is streamed by DuckDB with a RAM cap (--memory-limit): if more memory
+is needed DuckDB spills to temporary files next to the output.
+The Parquet is written to a .tmp file and renamed only if everything went
+well: an interrupted run never leaves a half-written output file.
 
-Uso:
+Usage:
     python src/loading/prepare_data.py data/energy_consumption_unlabelled.csv \
         data/clean/unlabelled.parquet
 
-IMPORTANTE: questo filtro serve per i dati di sviluppo (soprattutto il file
-unlabelled). In inference.py NON va scartato nessun customer_id del test set,
-perche' l'output deve avere esattamente una riga per ogni cliente del test.
+IMPORTANT: this filter is for the development data (especially the unlabelled
+file). inference.py must NOT drop any customer_id of the test set, because the
+output must have exactly one row for every customer of the test.
 """
 import argparse
 import sys
@@ -23,9 +23,9 @@ from pathlib import Path
 
 import duckdb
 
-# Tipi dichiarati, non indovinati: se un valore non e' convertibile (es. virgola
-# decimale senza --decimal ,) DuckDB si ferma con un errore invece di leggere testo.
-# customer_id resta testo (zeri iniziali), timestamp_local resta testo (ora legale).
+# Declared types, not guessed: if a value cannot be converted (e.g. decimal comma
+# without --decimal ,) DuckDB stops with an error instead of reading text.
+# customer_id stays text (leading zeros), timestamp_local stays text (DST).
 TYPES = {
     "customer_id": "VARCHAR",
     "energy_consumption_kwh": "DOUBLE",
@@ -35,25 +35,25 @@ TYPES = {
 
 
 def q(text: str) -> str:
-    """Letterale SQL tra apici."""
+    """Quoted SQL literal."""
     return "'" + text.replace("'", "''") + "'"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("src", help="CSV di ingresso")
-    ap.add_argument("dst", help="file Parquet di uscita")
-    ap.add_argument("--prefix", default="POD", help="prefisso richiesto per customer_id (default POD)")
-    ap.add_argument("--delimiter", default=None, help="separatore di campo (auto-rilevato se omesso)")
-    ap.add_argument("--decimal", default=".", help="separatore decimale (default '.')")
-    ap.add_argument("--memory-limit", default="4GB", help="RAM massima per DuckDB (default 4GB)")
-    ap.add_argument("--threads", type=int, default=2, help="thread di DuckDB (default 2)")
-    ap.add_argument("--sort", action="store_true", help="ordina per cliente e tempo (usa molta memoria/disco)")
+    ap.add_argument("src", help="input CSV")
+    ap.add_argument("dst", help="output Parquet file")
+    ap.add_argument("--prefix", default="POD", help="required customer_id prefix (default POD)")
+    ap.add_argument("--delimiter", default=None, help="field separator (auto-detected if omitted)")
+    ap.add_argument("--decimal", default=".", help="decimal separator (default '.')")
+    ap.add_argument("--memory-limit", default="4GB", help="maximum RAM for DuckDB (default 4GB)")
+    ap.add_argument("--threads", type=int, default=2, help="DuckDB threads (default 2)")
+    ap.add_argument("--sort", action="store_true", help="sort by customer and time (uses a lot of memory/disk)")
     a = ap.parse_args()
 
     src, dst = Path(a.src), Path(a.dst)
     if not src.is_file():
-        print(f"File non trovato: {src}", file=sys.stderr)
+        print(f"File not found: {src}", file=sys.stderr)
         return 1
     dst.parent.mkdir(parents=True, exist_ok=True)
 
@@ -79,7 +79,7 @@ def main() -> int:
     try:
         return run(con, a, dst, tmp, like)
     except duckdb.Error as e:
-        print(f"Errore di DuckDB: {e}", file=sys.stderr)
+        print(f"DuckDB error: {e}", file=sys.stderr)
         return 1
     finally:
         con.close()
@@ -95,10 +95,10 @@ def run(con, a, dst: Path, tmp: Path, like: str) -> int:
     missing = set(TYPES) - set(cols)
     wrong = {c: cols[c] for c in TYPES if c in cols and cols[c] != TYPES[c]}
     if missing or wrong:
-        print(f"Colonne mancanti: {sorted(missing)}, tipi errati: {wrong}. Trovate: {cols}", file=sys.stderr)
+        print(f"Missing columns: {sorted(missing)}, wrong types: {wrong}. Found: {cols}", file=sys.stderr)
         return 1
 
-    # Una sola lettura per i conteggi (forza anche la conversione di tutte le colonne)
+    # A single read for the counts (also forces the conversion of every column)
     total, null_ids, non_match, dropped_ids, _ = con.execute(
         f"""SELECT count(*),
                    count(*) FILTER (WHERE customer_id IS NULL),
@@ -123,17 +123,17 @@ def run(con, a, dst: Path, tmp: Path, like: str) -> int:
             FROM read_parquet({q(str(tmp))})"""
     ).fetchone()
 
-    print(f"Righe lette:            {total}")
-    print(f"Scartate (id nullo):    {null_ids}")
-    print(f"Scartate (non {a.prefix}%):   {non_match}  esempi: {dropped_ids or []}")
-    print(f"Righe tenute:           {kept}  ({n_cust} clienti)")
-    print(f"kWh nulli / negativi:   {null_kwh} / {neg_kwh}")
-    print(f"Epoch nulli / duplicati (cliente, epoch): {null_epoch} / {dup}")
+    print(f"Rows read:              {total}")
+    print(f"Dropped (null id):      {null_ids}")
+    print(f"Dropped (not {a.prefix}%):    {non_match}  examples: {dropped_ids or []}")
+    print(f"Rows kept:              {kept}  ({n_cust} customers)")
+    print(f"Null / negative kWh:    {null_kwh} / {neg_kwh}")
+    print(f"Null epochs / duplicates (customer, epoch): {null_epoch} / {dup}")
     if kept + null_ids + non_match != total:
-        print("ATTENZIONE: i conti non tornano, nessun file scritto", file=sys.stderr)
+        print("WARNING: the counts do not add up, no file written", file=sys.stderr)
         return 1
     tmp.replace(dst)
-    print(f"Scritto: {dst}")
+    print(f"Written: {dst}")
     return 0
 
 

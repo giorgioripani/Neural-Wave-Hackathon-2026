@@ -15,9 +15,9 @@ INSTALL_DAY, EXT_DAY = 150, 450
 
 
 def make_series(steps, seed=42):
-    """Serie SINTETICA a 15 minuti (UTC): notte 0,2 kWh, mezzogiorno (10-13 UTC) 0,4 kWh;
-    ogni (giorno, calo) di steps toglie calo kWh a mezzogiorno. Onda stagionale
-    moltiplicativa (+-10%), cioe` costante nel log come nel modello della v2."""
+    """SYNTHETIC 15-minute series (UTC): night 0.2 kWh, midday (10-13 UTC) 0.4 kWh;
+    every (day, drop) of steps removes drop kWh at midday. Multiplicative seasonal
+    wave (+-10%), i.e. constant in the log as in the v2 model."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range(START, periods=DAYS * 96, freq="15min", tz="UTC")
     day = np.arange(len(idx)) // 96
@@ -70,7 +70,7 @@ def test_without_midday_kwh_uses_lower_bound():
 
 def test_min_tail_days_skips_short_tail():
     daily = daily_ext_features(make_series([(INSTALL_DAY, 0.2), (EXT_DAY, 0.1)]))
-    tail = DAYS - 1 - (INSTALL_DAY + 60)  # giorni da date0 + 60 all'ultimo giorno
+    tail = DAYS - 1 - (INSTALL_DAY + 60)  # days from date0 + 60 to the last day
     assert len(estimate_extensions(daily, day_str(INSTALL_DAY), 4.0, min_tail_days=tail)) == 1
     assert estimate_extensions(daily, day_str(INSTALL_DAY), 4.0, min_tail_days=tail + 1) == []
 
@@ -132,9 +132,9 @@ def test_run_ext_dev_main_on_synthetic(tmp_path, monkeypatch, capsys):
     assert run_ext_dev.main() == 0
     out = capsys.readouterr().out
     assert len(out.strip().splitlines()) <= 10
-    assert "Estensioni previste:     1" in out
-    assert "accettato 1" in out and "finestra: ok 1" in out
-    assert "dentro finestra: si" in out and "trovata entro 30 gg: si" in out
+    assert "Predicted extensions:    1" in out
+    assert "accettato 1" in out and "window: ok 1" in out
+    assert "inside window: yes" in out and "found within 30 d: yes" in out
     assert (tmp_path / "o_diag.csv").exists()
 
 
@@ -155,7 +155,7 @@ def test_load_ext_labels_bad_date_raises(tmp_path):
     p = tmp_path / "e.csv"
     p.write_text("customer_id;extension_date;pv_capacity_after_extension_kwp\n"
                  "POD0001;2025-11-13;6.0\nPOD0002;13.11.2025;8.0\n", encoding="utf-8")
-    with pytest.raises(ValueError, match=r"1 date su 2.*99\.99\.9999"):
+    with pytest.raises(ValueError, match=r"1 dates out of 2.*99\.99\.9999"):
         load_ext_labels(p)
 
 
@@ -175,7 +175,7 @@ def test_load_ext_labels_wrong_field_count_raises(tmp_path):
     from src.models.run_ext_dev import load_ext_labels
     p = tmp_path / "e.csv"
     p.write_text("customer_id,extension_date,pv_capacity_after_extension_kwp\nPOD0001,2025-11-13,6,5\n")
-    with pytest.raises(ValueError, match="numero di campi"):
+    with pytest.raises(ValueError, match="number of fields"):
         load_ext_labels(p)
 
 

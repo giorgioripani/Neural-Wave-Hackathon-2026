@@ -1,56 +1,56 @@
 #!/usr/bin/env python3
-"""Validazione della data (task 2) sui clienti di sviluppo con pv_installed=TRUE.
+"""Validation of the date (task 2) on the development customers with pv_installed=TRUE.
 
-Per ogni cliente: cifre giornaliere (daily_midday_ratio), poi TRE finestre di
-WINDOW_DAYS giorni con la data vera al 25%, 50% e 75% della finestra, per imitare
-il test (circa 2 anni) senza dipendere da una sola posizione. Le finestre restano
-DENTRO i dati del cliente (stessa regola di src/eval/validate.py): se una finestra
-uscirebbe dai dati viene spostata, quindi la data vera puo' cadere in un punto
-diverso da quello nominale (pos_real nel CSV). Se i dati sono piu' corti di
-WINDOW_DAYS si usa tutta la serie. Nessun parametro scelto sui risultati.
+For each customer: daily figures (daily_midday_ratio), then THREE windows of
+WINDOW_DAYS days with the true date at 25%, 50% and 75% of the window, to mimic
+a 2-year test without depending on a single position. The windows stay
+INSIDE the customer's data (same rule as src/eval/validate.py): if a window
+would leave the data it is shifted, so the true date may fall at a point
+different from the nominal one (pos_real in the CSV). If the data are shorter than
+WINDOW_DAYS the whole series is used. No parameter chosen on the results.
 
-Uso (dalla radice del repo):
+Usage (from the repository root):
     python src/models/run_date_dev.py [--series data/clean/dev.parquet]
         [--labels data/pv_labels_dev.csv] [--out ...] [--method v1|v2|v3|v4] [--refine]
         [--compare-agg] [--compare-refined] [--protocol windows|last730|full] [--nested-all]
         [--compare-final]
 
---method di default: v2, il metodo usato da inference.py (date.estimate).
-v1, v2, v3 si confrontano fra loro; v4 (v2 + secondo gradino) solo con v2.
---compare-agg: stesso protocollo di finestre, D per cliente (media delle sue
-finestre) per date.estimate_cfg con agg = all, weekdays, weekly_median. Stampa
-solo: D medio di ciascuna; per weekdays e weekly_median i clienti migliorati e
-peggiorati rispetto ad all di piu` di AGG_MARGIN_DAYS giorni di errore medio;
-intervallo bootstrap al 90% della differenza di D rispetto ad all (clienti
-ricampionati, BOOT_REPS ripetizioni, seed 42); D con selezione annidata
-leave-one-customer-out (variante con D medio piu` alto sugli altri clienti, a
-parita` vince all) e quante volte e` stata scelta ciascuna variante.
-Salva outputs/date_dev_agg.csv (una riga per cliente).
---compare-refined: stesse statistiche fra v2 e date.estimate_refined (a parita`
-vince v2); salva outputs/date_dev_refined.csv.
---protocol last730: una sola finestra per cliente, gli ultimi 730 giorni dei suoi
-dati (ts_epoch > ultimo ts_epoch - 730 giorni, come demo/make_fake_test.py), anche
-se la data vera cade prima. Stampa D medio, mediana dell'errore, clienti oltre 30
-giorni e i clienti con la data vera prima della finestra (con il loro D a parte).
-Default: windows (le tre finestre sopra).
---protocol full: una sola finestra per cliente, l'intera serie disponibile.
---compare-final (con --protocol windows, last730 o full): candidate v2, refined,
-v2_refine e refined_refine (FINAL); *_refine applica extensions.refine_date0 sulla
-serie della STESSA finestra usata per la stima. Per ogni candidata diversa da v2:
-D medio, migliorati/peggiorati rispetto a v2 di piu` di AGG_MARGIN_DAYS giorni,
-differenza di D con intervallo bootstrap al 90% (BOOT_REPS ricampionamenti dei
-clienti, seed 42, gli stessi per tutte); poi selezione annidata LOCO fra le quattro
-(a parita` vince v2) e scelte. Salva outputs/date_dev_final_<protocollo>.csv.
---nested-all: D per cliente per tutte le versioni (NESTED_ALL) con il protocollo
-scelto; stampa il D della selezione annidata leave-one-customer-out (a parita`
-vince la v2) e le scelte. Si puo` usare insieme a --protocol last730.
---refine: dopo il metodo scelto si applica extensions.refine_date0 sulla serie
-della finestra (solo al metodo scelto); si confronta anche con lo stesso metodo
-senza refine ("raw") e si stampa il conteggio dei motivi.
-Salva outputs/date_dev_<metodo>.csv, con colonne di confronto *_<altro metodo>.
-Stampa solo: clienti, D medio, mediana dell'errore in giorni, clienti con
-errore > 30 giorni (errore del cliente = mediana sulle sue finestre) e, per ogni
-metodo di confronto, i clienti migliorati/peggiorati (D medio del cliente).
+--method default: v2, the method used by inference.py (date.estimate).
+v1, v2, v3 are compared with each other; v4 (v2 + second step) only with v2.
+--compare-agg: same window protocol, D per customer (mean over its
+windows) for date.estimate_cfg with agg = all, weekdays, weekly_median. Prints
+only: mean D of each; for weekdays and weekly_median the customers improved and
+worsened compared with all by more than AGG_MARGIN_DAYS days of mean error;
+90% bootstrap interval of the difference in D compared with all (customers
+resampled, BOOT_REPS repetitions, seed 42); D with nested
+leave-one-customer-out selection (variant with the highest mean D on the other customers,
+ties go to all) and how many times each variant was chosen.
+Saves outputs/date_dev_agg.csv (one row per customer).
+--compare-refined: same statistics between v2 and date.estimate_refined (ties go
+to v2); saves outputs/date_dev_refined.csv.
+--protocol last730: a single window per customer, the last 730 days of its
+data (ts_epoch > last ts_epoch - 730 days, as demo/make_fake_test.py), even
+if the true date falls before. Prints mean D, median error, customers over 30
+days and the customers with the true date before the window (with their own D).
+Default: windows (the three windows above).
+--protocol full: a single window per customer, the whole available series.
+--compare-final (with --protocol windows, last730 or full): candidates v2, refined,
+v2_refine and refined_refine (FINAL); *_refine applies extensions.refine_date0 on the
+series of the SAME window used for the estimate. For every candidate other than v2:
+mean D, improved/worsened compared with v2 by more than AGG_MARGIN_DAYS days,
+difference in D with 90% bootstrap interval (BOOT_REPS resamplings of the
+customers, seed 42, the same for all); then nested LOCO selection among the four
+(ties go to v2) and choices. Saves outputs/date_dev_final_<protocol>.csv.
+--nested-all: D per customer for all versions (NESTED_ALL) with the chosen
+protocol; prints the D of the nested leave-one-customer-out selection (ties
+go to v2) and the choices. Can be used together with --protocol last730.
+--refine: after the chosen method extensions.refine_date0 is applied on the series
+of the window (only to the chosen method); it is also compared with the same method
+without refine ("raw") and the count of the reasons is printed.
+Saves outputs/date_dev_<method>.csv, with comparison columns *_<other method>.
+Prints only: customers, mean D, median error in days, customers with
+error > 30 days (customer error = median over its windows) and, for every
+comparison method, the improved/worsened customers (mean D of the customer).
 """
 import argparse
 import sys
@@ -73,17 +73,17 @@ WINDOW_DAYS = 730
 POSITIONS = (0.25, 0.50, 0.75)
 METHODS = {"v1": estimate_v1, "v2": estimate_v2, "v3": estimate_v3, "v4": estimate_v4}
 DEFAULT_METHOD = next(m for m, f in METHODS.items() if f is estimate)
-# metodi ricalcolati nella stessa esecuzione per il confronto per cliente
+# methods recomputed in the same run for the per-customer comparison
 _BASE = ("v1", "v2", "v3")
 COMPARE = {**{m: [o for o in _BASE if o != m] for m in _BASE}, "v4": ["v2"]}
 
 
 def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, method=estimate, days: int = WINDOW_DAYS,
                       series: pd.DataFrame | None = None) -> list:
-    """Una riga di risultato per finestra. daily: colonne date, midday_ratio.
-    method: funzione daily -> 'AAAA-MM-GG' (estimate_v1 ... estimate_v4).
-    series: serie a 15 minuti del cliente; se data, refine_date0 sul tratto della
-    finestra corregge la data e il motivo va in refine_reason."""
+    """One result row per window. daily: columns date, midday_ratio.
+    method: function daily -> 'YYYY-MM-DD' (estimate_v1 ... estimate_v4).
+    series: 15-minute series of the customer; if given, refine_date0 on the stretch of the
+    window corrects the date and the reason goes to refine_reason."""
     dates = pd.to_datetime(daily["date"])
     t = pd.Timestamp(true_date).normalize()
     first, end = dates.min(), dates.max() + pd.Timedelta(days=1)
@@ -105,9 +105,9 @@ def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, metho
         rows.append(row)
     return rows
 
-AGG_MARGIN_DAYS = 5   # --compare-agg: migliorato/peggiorato se l'errore medio cambia di piu` di 5 giorni
+AGG_MARGIN_DAYS = 5   # --compare-agg: improved/worsened if the mean error changes by more than 5 days
 BOOT_REPS = 2000
-BOOT_CI = (5, 95)     # intervallo al 90%
+BOOT_CI = (5, 95)     # 90% interval
 
 
 AGG_METHODS = {a: (lambda w, a=a: estimate_cfg(w, a)) for a in AGG_VARIANTS}
@@ -115,8 +115,8 @@ REFINED_METHODS = {"v2": estimate_v2, "refined": estimate_refined}
 
 
 def methods_per_customer(daily: pd.DataFrame, true_date, methods: dict) -> dict:
-    """Per ogni metodo {nome: funzione daily -> data}: D del cliente (media delle
-    finestre) ed errore assoluto medio in giorni (NaN se nessuna previsione)."""
+    """For every method {name: function daily -> date}: D of the customer (mean over the
+    windows) and mean absolute error in days (NaN if no prediction)."""
     out = {}
     for name, fn in methods.items():
         rows = evaluate_customer(daily, true_date, method=fn)
@@ -127,22 +127,22 @@ def methods_per_customer(daily: pd.DataFrame, true_date, methods: dict) -> dict:
 
 
 def agg_per_customer(daily: pd.DataFrame, true_date) -> dict:
-    """methods_per_customer con le varianti di estimate_cfg."""
+    """methods_per_customer with the estimate_cfg variants."""
     return methods_per_customer(daily, true_date, AGG_METHODS)
 
 
 def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS, variants=AGG_VARIANTS) -> dict:
-    """per_cust: una riga per cliente, colonne D_<variante> ed err_<variante>; la
-    prima variante e` il riferimento. -> dict con D medio per variante,
-    migliorati/peggiorati e intervallo bootstrap rispetto al riferimento, D della
-    selezione annidata leave-one-customer-out e scelte per variante."""
+    """per_cust: one row per customer, columns D_<variant> and err_<variant>; the
+    first variant is the reference. -> dict with mean D per variant,
+    improved/worsened and bootstrap interval compared with the reference, D of the
+    nested leave-one-customer-out selection and choices per variant."""
     variants = tuple(variants)
     ref = variants[0]
     D = per_cust[[f"D_{a}" for a in variants]].to_numpy(float)
     n = len(D)
     res = {"mean": {a: float(D[:, i].mean()) for i, a in enumerate(variants)}}
     rng = np.random.default_rng(seed)
-    idx = rng.integers(0, n, size=(reps, n))  # stessi ricampionamenti per tutte le varianti
+    idx = rng.integers(0, n, size=(reps, n))  # same resamplings for all variants
     for i, a in enumerate(variants[1:], start=1):
         diff_err = per_cust[f"err_{a}"] - per_cust[f"err_{ref}"]
         diff = D[:, i] - D[:, 0]
@@ -151,8 +151,8 @@ def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS,
                   "diff": float(diff.mean()), "ci": tuple(float(q) for q in np.percentile(boot, BOOT_CI))}
     chosen, nested = [], []
     for j in range(n):
-        # con un solo cliente non ci sono "altri": si tiene il riferimento
-        k = int(np.argmax(np.delete(D, j, axis=0).mean(axis=0))) if n > 1 else 0  # argmax tiene il primo massimo: a parita` vince il riferimento
+        # with a single customer there are no "others": the reference is kept
+        k = int(np.argmax(np.delete(D, j, axis=0).mean(axis=0))) if n > 1 else 0  # argmax keeps the first maximum: ties go to the reference
         chosen.append(variants[k])
         nested.append(D[j, k])
     res["nested"] = float(np.mean(nested))
@@ -161,11 +161,11 @@ def compare_agg(per_cust: pd.DataFrame, seed: int = SEED, reps: int = BOOT_REPS,
 
 
 def run_compare(pos_lab: pd.DataFrame, groups: dict, out: str, methods: dict) -> int:
-    """Confronto di methods (il primo e` il riferimento) con le statistiche di compare_agg."""
+    """Comparison of methods (the first is the reference) with the compare_agg statistics."""
     names = tuple(methods)
     rows = []
     for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
-        if cid not in groups:  # come nel protocollo principale: D = 0
+        if cid not in groups:  # as in the main protocol: D = 0
             rows.append({"customer_id": cid, **{f"D_{a}": 0.0 for a in names},
                          **{f"err_{a}": np.nan for a in names}})
             continue
@@ -174,12 +174,12 @@ def run_compare(pos_lab: pd.DataFrame, groups: dict, out: str, methods: dict) ->
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     per_cust.to_csv(out, index=False)
     r = compare_agg(per_cust, variants=names)
-    print(f"Clienti: {len(per_cust)}; D medio: " + ", ".join(f"{a} {v:.3f}" for a, v in r["mean"].items()))
+    print(f"Customers: {len(per_cust)}; mean D: " + ", ".join(f"{a} {v:.3f}" for a, v in r["mean"].items()))
     for a in names[1:]:
         lo, hi = r[a]["ci"]
-        print(f"{a} vs {names[0]}: migliorati {r[a]['better']}, peggiorati {r[a]['worse']} (> {AGG_MARGIN_DAYS} gg); "
-              f"diff D {r[a]['diff']:+.3f}, IC 90% [{lo:+.3f}, {hi:+.3f}]")
-    print(f"Selezione annidata LOCO: D {r['nested']:.3f}; scelte: "
+        print(f"{a} vs {names[0]}: improved {r[a]['better']}, worsened {r[a]['worse']} (> {AGG_MARGIN_DAYS} d); "
+              f"diff D {r[a]['diff']:+.3f}, 90% CI [{lo:+.3f}, {hi:+.3f}]")
+    print(f"Nested LOCO selection: D {r['nested']:.3f}; choices: "
           + ", ".join(f"{a} {c}" for a, c in r["chosen"].items()))
     return 0
 
@@ -188,22 +188,22 @@ def run_compare_agg(pos_lab: pd.DataFrame, groups: dict, out: str) -> int:
     return run_compare(pos_lab, groups, out, AGG_METHODS)
 
 
-LAST_WINDOW_S = 730 * 86400  # stessa regola di demo/make_fake_test.py
-# --nested-all: la v2 e` la prima, cosi` a parita` vince lei
+LAST_WINDOW_S = 730 * 86400  # same rule as demo/make_fake_test.py
+# --nested-all: v2 comes first, so it wins ties
 NESTED_ALL = {"v2": estimate_v2, "v1": estimate_v1, "v3": estimate_v3, "v4": estimate_v4,
               "weekdays": AGG_METHODS["weekdays"], "weekly_median": AGG_METHODS["weekly_median"],
               "refined": estimate_refined}
 
 
 def last730_daily(series: pd.DataFrame) -> pd.DataFrame:
-    """Serie a 15 minuti di un cliente -> daily_midday_ratio degli ultimi 730 giorni."""
+    """15-minute series of one customer -> daily_midday_ratio of the last 730 days."""
     cut = series[series["ts_epoch"] > series["ts_epoch"].max() - LAST_WINDOW_S]
     return daily_midday_ratio(cut)
 
 
 def evaluate_last730(daily: pd.DataFrame, true_date, method=estimate) -> dict:
-    """daily: gia` ritagliato con last730_daily. -> una riga con pred_date, err_days,
-    score e true_before (data vera prima del primo giorno della finestra)."""
+    """daily: already cropped with last730_daily. -> one row with pred_date, err_days,
+    score and true_before (true date before the first day of the window)."""
     t = pd.Timestamp(true_date).normalize()
     dates = pd.to_datetime(daily["date"])
     row = {"true_date": t.date(), "n_days": len(daily), "pred_date": "", "err_days": np.nan, "score": 0.0,
@@ -216,15 +216,15 @@ def evaluate_last730(daily: pd.DataFrame, true_date, method=estimate) -> dict:
 
 
 def protocol_rows(daily: pd.DataFrame, true_date, method, protocol: str) -> list:
-    """Righe di risultato del cliente con il protocollo dato (windows, last730, full).
-    Con last730 e full daily e` gia` la finestra unica."""
+    """Result rows of the customer with the given protocol (windows, last730, full).
+    With last730 and full, daily is already the single window."""
     if protocol in ("last730", "full"):
         return [evaluate_last730(daily, true_date, method)]
     return evaluate_customer(daily, true_date, method=method)
 
 
 def last730_summary(res: pd.DataFrame) -> dict:
-    """res: una riga per cliente (score, err_days, true_before)."""
+    """res: one row per customer (score, err_days, true_before)."""
     before = res["true_before"].astype(bool)
     err = res["err_days"].abs()
     return {"n": len(res), "D": float(res["score"].mean()), "med_err": float(err.median()),
@@ -234,17 +234,17 @@ def last730_summary(res: pd.DataFrame) -> dict:
 
 
 def nested_all(per_cust: pd.DataFrame, methods=NESTED_ALL) -> dict:
-    """Selezione annidata LOCO su tutte le versioni (la prima vince a parita`)."""
+    """Nested LOCO selection over all versions (the first wins ties)."""
     r = compare_agg(per_cust, variants=tuple(methods), reps=1)
     return {"nested": r["nested"], "chosen": r["chosen"]}
 
 
 def run_protocol(a, pos_lab: pd.DataFrame, groups: dict) -> int:
-    """--protocol last730 o full, e/o --nested-all."""
+    """--protocol last730 or full, and/or --nested-all."""
     methods = NESTED_ALL if a.nested_all else {}
     rows, per_cust = [], []
     for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
-        if cid not in groups:  # come nel protocollo principale: D = 0
+        if cid not in groups:  # as in the main protocol: D = 0
             rows.append({"customer_id": cid, "true_date": true_date.date(), "n_days": 0, "score": 0.0,
                          "err_days": np.nan, "true_before": False})
             per_cust.append({"customer_id": cid, **{f"D_{m}": 0.0 for m in methods}, **{f"err_{m}": np.nan for m in methods}})
@@ -268,17 +268,17 @@ def run_protocol(a, pos_lab: pd.DataFrame, groups: dict) -> int:
         res = pd.DataFrame(rows)
         res.to_csv(out, index=False)
         sm = last730_summary(res)
-        print(f"Protocollo {a.protocol}, metodo {a.method}: clienti {sm['n']}, D medio {sm['D']:.3f}, "
-              f"mediana errore {sm['med_err']:.1f} gg, oltre 30 gg {sm['over30']}")
-        print(f"Data vera prima della finestra: {sm['n_before']} clienti, D medio {sm['D_before']:.3f} "
-              f"(gli altri: {sm['D_inside']:.3f})")
+        print(f"Protocol {a.protocol}, method {a.method}: customers {sm['n']}, mean D {sm['D']:.3f}, "
+              f"median error {sm['med_err']:.1f} d, over 30 d {sm['over30']}")
+        print(f"True date before the window: {sm['n_before']} customers, mean D {sm['D_before']:.3f} "
+              f"(the others: {sm['D_inside']:.3f})")
     if a.nested_all:
         pc = pd.DataFrame(per_cust)
         pc.to_csv(out.with_name(out.stem + "_per_version.csv"), index=False)
         r = nested_all(pc)
-        print(f"Selezione annidata LOCO su tutte ({a.protocol}): D {r['nested']:.3f}; D medio v2 "
+        print(f"Nested LOCO selection over all ({a.protocol}): D {r['nested']:.3f}; mean D v2 "
               f"{pc['D_v2'].mean():.3f}")
-        print("Scelte: " + ", ".join(f"{m} {c}" for m, c in r["chosen"].items()))
+        print("Choices: " + ", ".join(f"{m} {c}" for m, c in r["chosen"].items()))
     return 0
 
 
@@ -287,9 +287,9 @@ FINAL = {"v2": (estimate_v2, False), "refined": (estimate_refined, False),
 
 
 def protocol_windows(series: pd.DataFrame, true_date, protocol: str) -> list:
-    """Serie a 15 minuti di un cliente -> [(daily della finestra, serie della finestra)].
-    windows: le finestre di evaluate_customer (stesse date); last730: ultimi 730
-    giorni; full: tutta la serie."""
+    """15-minute series of one customer -> [(daily of the window, series of the window)].
+    windows: the windows of evaluate_customer (same dates); last730: last 730
+    days; full: the whole series."""
     if protocol == "full":
         return [(daily_midday_ratio(series), series)]
     if protocol == "last730":
@@ -308,9 +308,9 @@ def protocol_windows(series: pd.DataFrame, true_date, protocol: str) -> list:
 
 
 def final_per_customer(series: pd.DataFrame, true_date, protocol: str, candidates=FINAL) -> dict:
-    """D del cliente (media delle finestre) ed errore assoluto medio per ogni candidata.
-    La stima di base si calcola una volta per finestra; refine_date0 usa la serie
-    della stessa finestra."""
+    """D of the customer (mean over the windows) and mean absolute error for every candidate.
+    The base estimate is computed once per window; refine_date0 uses the series
+    of the same window."""
     t = pd.Timestamp(true_date).normalize()
     scores = {c: [] for c in candidates}
     errs = {c: [] for c in candidates}
@@ -338,7 +338,7 @@ def run_compare_final(pos_lab: pd.DataFrame, groups: dict, protocol: str, out: s
     names = tuple(FINAL)
     rows = []
     for cid, true_date in zip(pos_lab["customer_id"], pos_lab["pv_installation_date"]):
-        if cid not in groups:  # come nel protocollo principale: D = 0
+        if cid not in groups:  # as in the main protocol: D = 0
             rows.append({"customer_id": cid, **{f"D_{c}": 0.0 for c in names}, **{f"err_{c}": np.nan for c in names}})
             continue
         rows.append({"customer_id": cid, **final_per_customer(groups[cid], true_date, protocol)})
@@ -346,13 +346,13 @@ def run_compare_final(pos_lab: pd.DataFrame, groups: dict, protocol: str, out: s
     path = Path(out or f"outputs/date_dev_final_{protocol}.csv")
     path.parent.mkdir(parents=True, exist_ok=True)
     per_cust.to_csv(path, index=False)
-    r = compare_agg(per_cust, variants=names)  # stessi ricampionamenti per tutte le candidate
-    print(f"Protocollo {protocol}: clienti {len(per_cust)}, D medio v2 {r['mean']['v2']:.3f}")
+    r = compare_agg(per_cust, variants=names)  # same resamplings for all candidates
+    print(f"Protocol {protocol}: customers {len(per_cust)}, mean D v2 {r['mean']['v2']:.3f}")
     for c in names[1:]:
         lo, hi = r[c]["ci"]
-        print(f"{c}: D {r['mean'][c]:.3f}, migliorati {r[c]['better']}, peggiorati {r[c]['worse']} "
-              f"(> {AGG_MARGIN_DAYS} gg vs v2), diff D {r[c]['diff']:+.3f}, IC 90% [{lo:+.3f}, {hi:+.3f}]")
-    print(f"Selezione annidata LOCO: D {r['nested']:.3f}; scelte: "
+        print(f"{c}: D {r['mean'][c]:.3f}, improved {r[c]['better']}, worsened {r[c]['worse']} "
+              f"(> {AGG_MARGIN_DAYS} d vs v2), diff D {r[c]['diff']:+.3f}, 90% CI [{lo:+.3f}, {hi:+.3f}]")
+    print(f"Nested LOCO selection: D {r['nested']:.3f}; choices: "
           + ", ".join(f"{c} {k}" for c, k in r["chosen"].items()))
     return 0
 
@@ -360,21 +360,21 @@ def run_compare_final(pos_lab: pd.DataFrame, groups: dict, protocol: str, out: s
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
-    ap.add_argument("--out", default=None, help="default outputs/date_dev_<metodo>.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, then data/raw/pv_labels_dev.csv")
+    ap.add_argument("--out", default=None, help="default outputs/date_dev_<method>.csv")
     ap.add_argument("--method", choices=sorted(METHODS), default=DEFAULT_METHOD)
-    ap.add_argument("--refine", action="store_true", help="applica refine_date0 dopo il metodo")
-    ap.add_argument("--compare-agg", action="store_true", help="confronto di estimate_cfg: all, weekdays, weekly_median")
-    ap.add_argument("--compare-refined", action="store_true", help="confronto fra v2 ed estimate_refined")
+    ap.add_argument("--refine", action="store_true", help="apply refine_date0 after the method")
+    ap.add_argument("--compare-agg", action="store_true", help="comparison of estimate_cfg: all, weekdays, weekly_median")
+    ap.add_argument("--compare-refined", action="store_true", help="comparison between v2 and estimate_refined")
     ap.add_argument("--protocol", choices=["windows", "last730", "full"], default="windows",
-                    help="windows: tre finestre (default); last730: ultimi 730 giorni; full: serie intera")
-    ap.add_argument("--nested-all", action="store_true", help="selezione annidata LOCO su tutte le versioni")
+                    help="windows: three windows (default); last730: last 730 days; full: full series")
+    ap.add_argument("--nested-all", action="store_true", help="nested LOCO selection over all versions")
     ap.add_argument("--compare-final", action="store_true", help="v2, refined, v2_refine, refined_refine")
     a = ap.parse_args()
     if a.compare_final and (a.refine or a.compare_agg or a.compare_refined or a.nested_all):
-        ap.error("--compare-final non si combina con --refine, --compare-agg, --compare-refined, --nested-all")
+        ap.error("--compare-final cannot be combined with --refine, --compare-agg, --compare-refined, --nested-all")
     if (a.protocol != "windows" or a.nested_all) and (a.refine or a.compare_agg or a.compare_refined):
-        ap.error("--protocol last730/full e --nested-all non si combinano con --refine, --compare-agg, --compare-refined")
+        ap.error("--protocol last730/full and --nested-all cannot be combined with --refine, --compare-agg, --compare-refined")
     np.random.seed(SEED)
     out = a.out or f"outputs/date_dev_{a.method}{'_refine' if a.refine else ''}.csv"
     others = COMPARE[a.method] + (["raw"] if a.refine else [])
@@ -415,20 +415,20 @@ def main() -> int:
     res.to_csv(out, index=False)
 
     per_cust = res.groupby("customer_id").agg(score=("score", "mean"), abs_err=("err_days", lambda e: e.abs().median()))
-    print(f"Metodo:                  {a.method}{' + refine' if a.refine else ''}")
-    print(f"Clienti:                 {len(per_cust)}")
-    print(f"D medio:                 {res['score'].mean():.3f}")
-    print(f"Mediana errore (giorni): {res['err_days'].abs().median():.1f}")
-    print(f"Clienti errore > 30 gg:  {int((per_cust['abs_err'].isna() | (per_cust['abs_err'] > 30)).sum())}")
+    print(f"Method:                  {a.method}{' + refine' if a.refine else ''}")
+    print(f"Customers:               {len(per_cust)}")
+    print(f"Mean D:                  {res['score'].mean():.3f}")
+    print(f"Median error (days):     {res['err_days'].abs().median():.1f}")
+    print(f"Customers error > 30 d:  {int((per_cust['abs_err'].isna() | (per_cust['abs_err'] > 30)).sum())}")
     if a.refine:
         counts = res["refine_reason"].value_counts() if "refine_reason" in res else pd.Series(dtype=int)
-        print("Motivi refine (finestre): " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+        print("Refine reasons (windows): " + ", ".join(f"{k} {v}" for k, v in counts.items()))
     for m in others:
-        # migliorato/peggiorato = D medio del cliente sulle sue finestre, metodo scelto contro m
+        # improved/worsened = mean D of the customer over its windows, chosen method against m
         col = f"score_{m}"
         diff = res.assign(**{col: res[col].fillna(0.0)}).groupby("customer_id").apply(
             lambda g: g["score"].mean() - g[col].mean(), include_groups=False)
-        print(f"Migliorati / peggiorati vs {m}: {int((diff > 1e-9).sum())} / {int((diff < -1e-9).sum())}")
+        print(f"Improved / worsened vs {m}: {int((diff > 1e-9).sum())} / {int((diff < -1e-9).sum())}")
     return 0
 
 

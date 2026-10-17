@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Prova "tutti TRUE": la pipeline di inference.py con un detect finto (probabilita` 1 a tutti).
+""""All TRUE" smoke test: the inference.py pipeline with a fake detect (probability 1 for everyone).
 
-Serve a esercitare date e capacity su ogni cliente. Non modifica inference.py ne` src/:
-sostituisce solo, in memoria, il caricamento del modulo detect.
-Uso: python demo/smoke_all_true.py [data/fake_test.csv] [--out outputs/smoke_all_true]
-Scrive <out>/predictions.csv e stampa solo conteggi, minimo/massimo dei kWp e tempo.
+Exercises date and capacity on every customer. Does not modify inference.py or src/:
+it only replaces, in memory, the loading of the detect module.
+Usage: python demo/smoke_all_true.py [data/fake_test.csv] [--out outputs/smoke_all_true]
+Writes <out>/predictions.csv and prints only counts, min/max kWp and time.
 """
 import argparse
 import sys
@@ -37,7 +37,7 @@ def main() -> int:
     real_load = inference.load_module
     inference.load_module = lambda name: fake_detect() if name == "detect" else real_load(name)
     failures = Counter()
-    inference.warn = lambda what, cid, e: failures.update([what])  # conta le riserve di inference.py
+    inference.warn = lambda what, cid, e: failures.update([what])  # counts the inference.py fallbacks
 
     df, ids = inference.read_test(Path(a.src))
     rows = inference.predict_all(df, customers=ids)
@@ -47,12 +47,12 @@ def main() -> int:
     full = [r for r in rows if r["pv_installation_date"] and r["pv_capacity_kwp"] != ""]
     kwps = [float(r["pv_capacity_kwp"]) for r in full]
     at_median = sum(abs(k - inference.DEFAULT_KWP) < 1e-9 for k in kwps)
-    print(f"Clienti: {len(rows)}, con data e kWp: {len(full)}")
-    print(f"Date di riserva (eccezione in date): {failures['date']}")
-    print(f"kWp di riserva (eccezione in capacity): {failures['capacity']}; "
-          f"kWp uguali alla mediana {inference.DEFAULT_KWP} (riserva interna di capacity): {at_median}")
-    print(f"kWp min/max: {min(kwps):.2f} / {max(kwps):.2f}" if kwps else "kWp: nessuno")
-    print(f"Tempo totale: {elapsed:.1f} s; scritto {out / 'predictions.csv'}")
+    print(f"Customers: {len(rows)}, with date and kWp: {len(full)}")
+    print(f"Fallback dates (exception in date): {failures['date']}")
+    print(f"Fallback kWp (exception in capacity): {failures['capacity']}; "
+          f"kWp equal to the median {inference.DEFAULT_KWP} (capacity's internal fallback): {at_median}")
+    print(f"kWp min/max: {min(kwps):.2f} / {max(kwps):.2f}" if kwps else "kWp: none")
+    print(f"Total time: {elapsed:.1f} s; written {out / 'predictions.csv'}")
     return 0
 
 

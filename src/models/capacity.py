@@ -1,15 +1,15 @@
-"""Task 3 (kWp): punto d'ingresso per inference.py.
+"""Task 3 (kWp): entry point for inference.py.
 
-estimate(series, date) -> kWp (float > 0). Il metodo lo decide l'artefatto
-artifacts/capacity.json, scritto da src/models/train_capacity.py:
-    "a"       capacity_a: regressione Ridge su piu` feature solari verso log(kWp)
-    "b"       capacity_b: calo di mezzogiorno dopo la data (lineare o x costante)
-    "size"    capacity_size: log kWp lineare nel log della taglia del cliente
-    "blend"   capacity_blend: un modello base avvicinato alla mediana di training
-    "median"  mediana dei kWp di sviluppo (se nessun metodo la batte in validazione)
-Per provare un altro metodo: python -m src.models.train_capacity --method <nome>
-(nomi in train_capacity.METHODS)
-Niente rete e niente data/ in inferenza: solo l'artefatto.
+estimate(series, date) -> kWp (float > 0). The method is chosen by the artifact
+artifacts/capacity.json, written by src/models/train_capacity.py:
+    "a"       capacity_a: Ridge regression on several solar features towards log(kWp)
+    "b"       capacity_b: midday drop after the date (linear or constant factor)
+    "size"    capacity_size: log kWp linear in the log of the customer's size
+    "blend"   capacity_blend: a base model pulled towards the training median
+    "median"  median development kWp (if no method beats it in validation)
+To try another method: python -m src.models.train_capacity --method <name>
+(names in train_capacity.METHODS)
+No network and no data/ at inference time: only the artifact.
 """
 from __future__ import annotations
 
@@ -33,10 +33,10 @@ def load_params() -> dict:
 
 
 def predict_with(params: dict, series: pd.DataFrame, date: str) -> float:
-    """kWp con i parametri dati; ogni problema -> mediana salvata (mai 0 o negativo)."""
+    """kWp with the given parameters; any problem -> saved median (never 0 or negative)."""
     fallback = float(params.get("fallback_kwp", FALLBACK_KWP))
     mod = MODULES.get(params.get("method"))
-    if mod is None:  # "median" o metodo sconosciuto
+    if mod is None:  # "median" or unknown method
         return fallback
     try:
         kwp = mod.predict(mod.features(series, date), params)
@@ -46,7 +46,7 @@ def predict_with(params: dict, series: pd.DataFrame, date: str) -> float:
 
 
 def estimate(series: pd.DataFrame, date: str) -> float:
-    """Serie a 15 min di UN cliente + data 'AAAA-MM-GG' -> kWp (float > 0)."""
+    """15-min series of ONE customer + date 'YYYY-MM-DD' -> kWp (float > 0)."""
     try:
         params = load_params()
     except (OSError, ValueError):

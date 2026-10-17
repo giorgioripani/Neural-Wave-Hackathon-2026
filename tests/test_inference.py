@@ -24,7 +24,7 @@ def test_inference_outputs(tmp_path, sep):
     res = subprocess.run([sys.executable, str(ROOT / "inference.py"), str(src)],
                          cwd=tmp_path, capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
-    assert "Riserve usate: detect " in res.stdout
+    assert "Fallbacks used: detect " in res.stdout
 
     pred = (tmp_path / "predictions.csv").read_text(encoding="utf-8").splitlines()
     assert pred[0] == PRED_HEADER
@@ -43,7 +43,7 @@ def test_inference_outputs(tmp_path, sep):
     assert ext[0] == EXT_HEADER
 
 
-# --- Riserva di detect: se manca o fallisce, TRUE (mai 0 punti) -------------
+# --- Detect fallback: if missing or failing, TRUE (never 0 points) ---------
 
 def _load(tmp_path, monkeypatch, fake_detect, used=None, **fakes):
     import inference
@@ -73,7 +73,7 @@ def test_detect_missing_all_true(tmp_path, monkeypatch, capsys):
     assert sorted(r["customer_id"] for r in rows) == ids
     for r in rows:
         _assert_pv(r)
-    assert "detect non disponibile: tutti TRUE" in capsys.readouterr().out
+    assert "detect not available: all TRUE" in capsys.readouterr().out
     assert used["detect"] == len(ids)
 
 
@@ -87,7 +87,7 @@ def test_detect_raises_all_true(tmp_path, monkeypatch, capsys):
     assert sorted(r["customer_id"] for r in rows) == ids
     for r in rows:
         _assert_pv(r)
-    assert "detect non disponibile: tutti TRUE" in capsys.readouterr().out
+    assert "detect not available: all TRUE" in capsys.readouterr().out
 
 
 def test_detect_partial_missing_true(tmp_path, monkeypatch, capsys):
@@ -95,7 +95,7 @@ def test_detect_partial_missing_true(tmp_path, monkeypatch, capsys):
         @staticmethod
         def predict(df):
             ids = sorted(df["customer_id"].unique())
-            return {ids[0]: 0.1, ids[1]: float("nan")}  # ids[2:] mancanti
+            return {ids[0]: 0.1, ids[1]: float("nan")}  # ids[2:] missing
 
     used = {}
     rows, ids = _load(tmp_path, monkeypatch, Partial, used)
@@ -104,7 +104,7 @@ def test_detect_partial_missing_true(tmp_path, monkeypatch, capsys):
     assert by_id[ids[0]]["pv_installed"] is False
     for cid in ids[1:]:
         _assert_pv(by_id[cid])
-    assert f"detect: {len(ids) - 1} clienti senza probabilita', messi TRUE" in capsys.readouterr().out
+    assert f"detect: {len(ids) - 1} customers without probability, set to TRUE" in capsys.readouterr().out
 
 
 def test_date_capacity_fallback_counted(tmp_path, monkeypatch):
@@ -127,10 +127,10 @@ def test_date_capacity_fallback_counted(tmp_path, monkeypatch):
 
 def test_check_packages_warns(monkeypatch, capsys):
     import inference
-    monkeypatch.setattr(inference, "PACKAGES", {"numpy": "numpy", "pacchetto-finto": "pacchetto_finto_xyz"})
-    assert inference.check_packages() == ["pacchetto-finto"]
+    monkeypatch.setattr(inference, "PACKAGES", {"numpy": "numpy", "fake-package": "fake_package_xyz"})
+    assert inference.check_packages() == ["fake-package"]
     err = capsys.readouterr().err
-    assert "ATTENZIONE: manca il pacchetto pacchetto-finto" in err and "numpy" not in err
+    assert "WARNING: missing package fake-package" in err and "numpy" not in err
 
 
 # --- demo/check_env.py --------------------------------------------------------
@@ -139,21 +139,21 @@ def test_check_env_helpers(tmp_path, monkeypatch):
     sys.path.insert(0, str(ROOT / "demo"))
     import check_env
     req = tmp_path / "requirements.txt"
-    req.write_text("numpy==1.0.0\n# commento\npacchetto-finto==2.0\n", encoding="utf-8")
+    req.write_text("numpy==1.0.0\n# comment\nfake-package==2.0\n", encoding="utf-8")
     reqs = check_env.read_requirements(req)
-    assert reqs == {"numpy": "1.0.0", "pacchetto-finto": "2.0"}
+    assert reqs == {"numpy": "1.0.0", "fake-package": "2.0"}
     problems = []
     check_env.check_packages(reqs, problems)
-    assert any("numpy" in p and "invece di 1.0.0" in p for p in problems)
-    assert any("pacchetto-finto" in p and "mancante" in p for p in problems)
+    assert any("numpy" in p and "instead of 1.0.0" in p for p in problems)
+    assert any("fake-package" in p and "missing" in p for p in problems)
 
     (tmp_path / "artifacts").mkdir()
     (tmp_path / "artifacts" / "capacity.json").write_text("{rotto", encoding="utf-8")
     monkeypatch.setattr(check_env, "ROOT", tmp_path)
     problems = []
     check_env.check_artifacts(problems)
-    assert any("capacity.json non e` un JSON valido" in p for p in problems)
-    assert any("detect_params.json non esiste" in p for p in problems)
+    assert any("capacity.json is not valid JSON" in p for p in problems)
+    assert any("detect_params.json does not exist" in p for p in problems)
 
 
 # --- Estensioni (bonus) in inference.py ----------------------------------------
@@ -165,7 +165,7 @@ class _AllPV:
 
 
 def _fake_ext(per_customer=1, fail_for=()):
-    """Modulo finto: per ogni cliente `per_customer` estensioni con strength diverse."""
+    """Fake module: for every customer `per_customer` extensions with different strengths."""
     import types
     from src.models import extensions as real
 
@@ -182,7 +182,7 @@ def _fake_ext(per_customer=1, fail_for=()):
 
 
 def _run_main(tmp_path, monkeypatch, ext_mod, capsys=None):
-    """inference.main su dati sintetici con detect finto (tutti PV) -> (pred, ext, stdout)."""
+    """inference.main on synthetic data with a fake detect (all PV) -> (pred, ext, stdout)."""
     import inference
     series, _ = make_synthetic(n_customers=4, days=250)
     src = tmp_path / "test.csv"
@@ -202,10 +202,10 @@ def _run_main(tmp_path, monkeypatch, ext_mod, capsys=None):
 def test_extensions_missing_header_only(tmp_path, monkeypatch, capsys):
     pred_none, ext, out = _run_main(tmp_path, monkeypatch, None, capsys)
     assert ext == [EXT_HEADER]
-    assert "extensions non disponibile" in out and "ext 4" in out
+    assert "extensions not available" in out and "ext 4" in out
     pred_ext, ext2, _ = _run_main(tmp_path, monkeypatch, _fake_ext(), capsys)
     assert len(ext2) > 1
-    assert pred_none == pred_ext  # le estensioni non cambiano predictions.csv
+    assert pred_none == pred_ext  # the extensions do not change predictions.csv
 
 
 def test_extensions_raising_for_one_customer(tmp_path, monkeypatch, capsys):
@@ -214,7 +214,7 @@ def test_extensions_raising_for_one_customer(tmp_path, monkeypatch, capsys):
     _, ext, out = _run_main(tmp_path, monkeypatch, _fake_ext(fail_for={ids[-1]}), capsys)
     got = {line.split(";")[0] for line in ext[1:]}
     assert ids[-1] not in got and got == set(ids[:3])
-    assert "ext 1" in out and "pv_extensions_predictions.csv: 3 estensioni" in out
+    assert "ext 1" in out and "pv_extensions_predictions.csv: 3 extensions" in out
 
 
 def test_extensions_top_k_at_most_3(tmp_path, monkeypatch):
@@ -233,7 +233,7 @@ def test_extensions_output_format(tmp_path, monkeypatch):
 
 
 def test_detect_crash_for_one_customer_is_true(tmp_path, monkeypatch, capsys):
-    """P1: detect che fallisce su un solo cliente -> quel cliente TRUE (riserva), contato."""
+    """P1: detect failing on a single customer -> that customer TRUE (fallback), counted."""
     from src.models import detect
     orig = detect.features_from_daily
     calls = {"n": 0}
@@ -250,10 +250,10 @@ def test_detect_crash_for_one_customer_is_true(tmp_path, monkeypatch, capsys):
     by_id = {r["customer_id"]: r for r in rows}
     _assert_pv(by_id[ids[0]])
     assert used["detect"] == 1
-    assert "detect: 1 clienti senza probabilita', messi TRUE" in capsys.readouterr().out
+    assert "detect: 1 customers without probability, set to TRUE" in capsys.readouterr().out
 
 
-# --- Robustezza della lettura del test (fix/bug-fixes) ----------------------
+# --- Robustness of the test reader ------------------------------------------
 
 def _run(tmp_path, df, sep=";"):
     src = tmp_path / "test.csv"
@@ -268,18 +268,18 @@ def _run(tmp_path, df, sep=";"):
 def test_epoch_missing_rows_dropped_customer_kept(tmp_path):
     series, _ = make_synthetic(n_customers=2, days=250)
     series["timestamp_epoch"] = series["timestamp_epoch"].astype(float)
-    series.loc[5, "timestamp_epoch"] = float("nan")  # una riga senza epoch
+    series.loc[5, "timestamp_epoch"] = float("nan")  # one row without epoch
     lost = series.iloc[:10].assign(customer_id="NOEPOCH", timestamp_epoch=float("nan"))
     res, rows = _run(tmp_path, pd.concat([series, lost]))
     assert set(rows) == set(series["customer_id"]) | {"NOEPOCH"}
-    # nessuna riga valida -> nessuna probabilita` di detect -> riserva TRUE (come le altre riserve)
+    # no valid row -> no detect probability -> fallback TRUE (like the other fallbacks)
     assert rows["NOEPOCH"][1] == "TRUE" and len(rows["NOEPOCH"][2]) == 10 and float(rows["NOEPOCH"][3]) > 0
-    assert "righe senza id o epoch valido tolte" in res.stdout and "1 clienti senza righe valide" in res.stdout
+    assert "rows without a valid id or epoch dropped" in res.stdout and "1 customers without valid rows" in res.stdout
 
 
 def test_header_with_spaces_keeps_leading_zeros(tmp_path):
     series, _ = make_synthetic(n_customers=2, days=250)
-    series["customer_id"] = series["customer_id"].str.replace("POD", "00", regex=False)  # solo cifre
+    series["customer_id"] = series["customer_id"].str.replace("POD", "00", regex=False)  # digits only
     series.columns = [f" {c} " for c in series.columns]
     _, rows = _run(tmp_path, series)
     assert set(rows) == {"000000", "000001"}
@@ -327,8 +327,8 @@ def test_call_capacity_rejects_inf():
 
 
 def test_dirty_synthetic_csv(tmp_path, monkeypatch):
-    """tests/data/test_sporco.csv (sintetico): epoch vuoti e testuali, kWh testuali, duplicati,
-    id con zeri iniziali, un cliente con sole righe non valide -> nessun crash, una riga per id."""
+    """tests/data/test_sporco.csv ("dirty", synthetic): empty and text epochs, text kWh, duplicates,
+    ids with leading zeros, a customer with only invalid rows -> no crash, one row per id."""
     import inference
     src = ROOT / "tests" / "data" / "test_sporco.csv"
     monkeypatch.chdir(tmp_path)
@@ -342,7 +342,7 @@ def test_dirty_synthetic_csv(tmp_path, monkeypatch):
         assert pv in ("TRUE", "FALSE")
         assert (date == "" and kwp == "") if pv == "FALSE" else (len(date) == 10 and float(kwp) > 0)
     assert (tmp_path / "pv_extensions_predictions.csv").read_text(encoding="utf-8").startswith(EXT_HEADER)
-    # cliente con sole righe non valide: TRUE con il primo giorno del file e kWp > 0, mai campi vuoti
+    # customer with only invalid rows: TRUE with the first day of the file and kWp > 0, never empty fields
     import math
     import re
     _, pv, date, kwp = next(line.split(";") for line in pred[1:] if line.startswith("BADONLY;"))

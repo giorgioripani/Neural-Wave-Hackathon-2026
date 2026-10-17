@@ -26,14 +26,14 @@ def test_load_series_rules(tmp_path):
     p = write(tmp_path,
               "0012;0,5;2024-01-01 01:15:00;1704068100\n"
               "0012;-1,0;2024-01-01 01:00:00;1704067200\n"
-              "0012;9,9;2024-01-01 01:00:00;1704067200\n"   # ripetuta: si tiene la prima
-              "XYZ;;2024-01-01 01:00:00;1704067200\n")      # non POD: NON si scarta
+              "0012;9,9;2024-01-01 01:00:00;1704067200\n"   # repeated: the first one is kept
+              "XYZ;;2024-01-01 01:00:00;1704067200\n")      # not POD: NOT dropped
     df = load_series(p)
     assert list(df.columns) == ["customer_id", "ts_epoch", "kwh", "ts_local"]
     assert df["customer_id"].tolist() == ["0012", "0012", "XYZ"]   # zeri iniziali, ordinato per epoch
     assert df["kwh"].iloc[0] == 0.0                                 # negativo -> 0
     assert df["kwh"].iloc[1] == 0.5
-    assert np.isnan(df["kwh"].iloc[2])                              # mancante resta NaN
+    assert np.isnan(df["kwh"].iloc[2])                              # missing stays NaN
     assert str(df["ts_epoch"].dtype) == "int64"
 
 
@@ -44,7 +44,7 @@ def test_load_series_dot_decimal_and_filter(tmp_path):
 
 
 def test_daily_features_dst_days():
-    # Ultima domenica di marzo 2024: il giorno locale ha 92 misure, quello UTC 96
+    # Last Sunday of March 2024: the local day has 92 measurements, the UTC day 96
     ep = np.arange(pd.Timestamp("2024-03-30", tz="UTC").timestamp(),
                    pd.Timestamp("2024-04-01", tz="UTC").timestamp(), 900).astype("int64")
     df = pd.DataFrame({"customer_id": "A", "ts_epoch": ep, "kwh": 1.0, "ts_local": ""})
@@ -54,7 +54,7 @@ def test_daily_features_dst_days():
     assert f["n"].tolist() == [96, 96]
     assert f["midday"].tolist() == pytest.approx([0.2, 0.2])
     assert f["midday_night"].tolist() == pytest.approx([(0.2 + 1e-3) / (1 + 1e-3)] * 2)
-    # un quarto d'ora mancante non cambia le medie
+    # a missing quarter-hour does not change the means
     assert daily_features(df.drop(index=[0]))["night"].iloc[0] == pytest.approx(1.0)
 
 
@@ -91,7 +91,7 @@ def test_validate_no_leak_and_perfect_oracle():
                 "pv_capacity_kwp": t["pv_capacity_kwp"]}
 
     summary, preds = validate(series, lab, fit_predict=oracle, rounds=2)
-    assert all(seen)                                    # il cliente valutato non e' mai nell'addestramento
+    assert all(seen)                                    # the evaluated customer is never in the training set
     assert summary["score"].tolist() == pytest.approx([100.0, 100.0])
     days = (pd.to_datetime(preds["win_end"]) - pd.to_datetime(preds["win_start"])).dt.days
     assert (days == 730).all()
@@ -101,7 +101,7 @@ def test_validate_no_leak_and_perfect_oracle():
     assert crop(one, pd.Timestamp("2022-01-01"), pd.Timestamp("2022-01-02")).shape[0] == 96
 
 
-# --- load_test: lettore tollerante del test (nessuna eccezione per valori sporchi) ---
+# --- load_test: tolerant test reader (no exception for dirty values) ---
 
 from src.loading.load import load_test  # noqa: E402
 
@@ -113,19 +113,19 @@ def _test_csv(tmp_path, body, header=HEADER, name="t.csv", bom=False):
 
 
 DIRTY = ("0012;0,5;2024-01-01 01:00:00;1704067200\n"
-         "0012;0,7;2024-01-01 01:15:00;\n"              # epoch vuoto -> riga tolta
-         "0012;0,7;2024-01-01 01:30:00;abc\n"           # epoch testo -> riga tolta
-         "0013;n/a;2024-01-01 01:00:00;1704067200\n"    # kWh testo -> NaN, riga tenuta
+         "0012;0,7;2024-01-01 01:15:00;\n"              # empty epoch -> row dropped
+         "0012;0,7;2024-01-01 01:30:00;abc\n"           # text epoch -> row dropped
+         "0013;n/a;2024-01-01 01:00:00;1704067200\n"    # text kWh -> NaN, row kept
          "0013;-2;2024-01-01 01:15:00;1704068100\n"     # negativo -> 0
-         "0014;0,1;2024-01-01 01:00:00;\n"              # cliente con sole righe non valide
-         " 0015 ;0,2;2024-01-01 01:00:00;1704067200000\n"  # id con spazi, epoch in ms
-         "0015;0,9;2024-01-01 01:00:00;1704067200\n"    # ripetuta (stesso epoch) -> tolta
-         "0016;1;x;1704067200;9;9\n")                   # campi in piu`: riga saltata, cliente tenuto
+         "0014;0,1;2024-01-01 01:00:00;\n"              # customer with only invalid rows
+         " 0015 ;0,2;2024-01-01 01:00:00;1704067200000\n"  # id with spaces, epoch in ms
+         "0015;0,9;2024-01-01 01:00:00;1704067200\n"    # repeated (same epoch) -> dropped
+         "0016;1;x;1704067200;9;9\n")                   # extra fields: row skipped, customer kept
 
 
 def test_load_test_dirty_rows(tmp_path):
     df, ids = load_test(_test_csv(tmp_path, DIRTY), verbose=False)
-    assert ids == ["0012", "0013", "0014", "0015", "0016"]   # nessun cliente perso, zeri iniziali tenuti
+    assert ids == ["0012", "0013", "0014", "0015", "0016"]   # no customer lost, leading zeros kept
     assert sorted(df["customer_id"].unique()) == ["0012", "0013", "0015"]
     assert len(df[df["customer_id"] == "0012"]) == 1
     k13 = df[df["customer_id"] == "0013"]["kwh"].tolist()
@@ -144,7 +144,7 @@ def test_load_test_separators(tmp_path, sep, dec, bom):
 
 
 def test_load_test_mixed_header_separator_and_empty(tmp_path):
-    header = HEADER.replace(";", ",")                       # intestazione con , e dati con ;
+    header = HEADER.replace(";", ",")                       # header with , and data with ;
     df, ids = load_test(_test_csv(tmp_path, "0012;0,5;x;1704067200\n", header=header), verbose=False)
     assert ids == ["0012"] and len(df) == 1
     df, ids = load_test(_test_csv(tmp_path, "", name="vuoto.csv"), verbose=False)

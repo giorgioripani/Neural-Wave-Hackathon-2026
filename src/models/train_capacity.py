@@ -1,30 +1,30 @@
-"""Addestra e confronta i metodi kWp, poi scrive artifacts/capacity.json.
+"""Trains and compares the kWp methods, then writes artifacts/capacity.json.
 
-Valutazione con src/eval/validate.py (leave-one-out, finestre di 2 anni come il
-test, 5 giri, seed 42) solo sui clienti con PV: P misura solo i kWp, senza
-dipendere da detect.py. Data del cliente lasciato fuori (--date):
-    vera     dalle etichette (serve solo come data, non come risposta)
-    stimata  da date.py (estimate v2) sulla sua finestra di 2 anni, come in gara;
-             primo giorno della finestra se date.py fallisce (come inference.py)
-I clienti di training usano sempre la data vera, come l'artefatto finale.
+Evaluation with src/eval/validate.py (leave-one-out, 2-year windows, 5 rounds,
+seed 42) only on the customers with PV: P measures only the kWp, without
+depending on detect.py. Date of the left-out customer (--date):
+    vera     ("true") from the labels (used only as the date, not as the answer)
+    stimata  ("estimated") from date.py (estimate v2) on its 2-year window, as in the
+             competition; first day of the window if date.py fails (as inference.py)
+The training customers always use the true date, like the final artifact.
 
-Metodi (configurazioni fissate prima di guardare i risultati):
-    median          mediana dei kWp degli altri clienti (baseline di Andrea, P ~0,415)
+Methods (configurations fixed before looking at the results):
+    median          median kWp of the other customers (baseline, P ~0.415)
     b               capacity_b, kWp = a + b x drop_kw
     b_ratio         capacity_b, kWp = k x peak_kw
-    a               capacity_a, Ridge su 5 feature verso log(kWp)
-    size_night      capacity_size, log kWp = a + b log(notte nei giorni di riferimento)
-    size_all        capacity_size, log kWp = a + b log(media giornaliera nei giorni di riferimento)
-    geo_b, clip_b   capacity_blend: B lineare in media geometrica con la mediana / limitato a 0,5-2x
-    geo_size_night, geo_size_all   capacity_blend: taglia in media geometrica con la mediana
-    geo_b_loglog    capacity_blend: B log-log su drop_kw in media geometrica con la mediana
+    a               capacity_a, Ridge on 5 features towards log(kWp)
+    size_night      capacity_size, log kWp = a + b log(night on the reference days)
+    size_all        capacity_size, log kWp = a + b log(daily mean on the reference days)
+    geo_b, clip_b   capacity_blend: linear B in geometric mean with the median / clipped to 0.5-2x
+    geo_size_night, geo_size_all   capacity_blend: size in geometric mean with the median
+    geo_b_loglog    capacity_blend: log-log B on drop_kw in geometric mean with the median
 
-Uso (solo sviluppo, legge data/):
-    python -m src.models.train_capacity [--method auto|<nome>[,<nome>...]] [--date vera|stimata]
+Usage (development only, reads data/):
+    python -m src.models.train_capacity [--method auto|<name>[,<name>...]] [--date vera|stimata]
             [--no-save] [--series data/clean/dev.parquet] [--labels data/pv_labels_dev.csv]
-auto = prova i metodi di AUTO_RUN. Vince il P medio piu` alto, ma solo se batte la
-mediana di almeno MIN_GAIN; altrimenti resta la mediana. Stampa <= 10 righe,
-previsioni per cliente in outputs/capacity_validate_<metodo>.csv.
+auto = tries the AUTO_RUN methods. The highest mean P wins, but only if it beats the
+median by at least MIN_GAIN; otherwise the median stays. Prints <= 10 lines,
+per-customer predictions in outputs/capacity_validate_<method>_<date>.csv.
 """
 from __future__ import annotations
 
@@ -44,9 +44,9 @@ from src.models.capacity_common import daily_kw, save_params
 
 ROOT = Path(__file__).resolve().parents[2]
 DAY = pd.Timedelta(days=1)
-MIN_GAIN = 0.02  # un metodo sostituisce la mediana solo se la batte di almeno tanto in P
+MIN_GAIN = 0.02  # a method replaces the median only if it beats it by at least this much in P
 
-# nome -> (modulo, fit). None = mediana.
+# name -> (module, fit). None = median.
 METHODS = {
     "median": None,
     "b": (capacity_b, capacity_b.fit),
@@ -60,18 +60,18 @@ METHODS = {
     "geo_size_all": (capacity_blend, lambda t: capacity_blend.fit(t, "size_all", "geo")),
     "geo_b_loglog": (capacity_blend, lambda t: capacity_blend.fit(t, "b_loglog", "geo")),
 }
-# a e b_ratio sono gia` misurati (0,378 e 0,212): fuori dal giro di default per stare in 10 righe
+# a and b_ratio are already measured (0.378 and 0.212): left out of the default run to stay within 10 lines
 AUTO_RUN = ["median", "b", "size_night", "size_all", "geo_b", "clip_b", "geo_size_night", "geo_size_all"]
 
 
 def choose(p_mean: dict[str, float], min_gain: float = MIN_GAIN) -> str:
-    """Metodo con P medio piu` alto, se batte la mediana di almeno min_gain; altrimenti 'median'."""
+    """Method with the highest mean P, if it beats the median by at least min_gain; otherwise 'median'."""
     best = max(p_mean, key=p_mean.get)
     return best if p_mean[best] >= p_mean["median"] + min_gain else "median"
 
 
 def estimated_date(series: pd.DataFrame) -> str:
-    """Data come la vede inference.py: date.py (v2) sulla serie, o il primo giorno se fallisce."""
+    """Date as inference.py sees it: date.py (v2) on the series, or the first day if it fails."""
     try:
         out = str(date_mod.estimate(date_mod.daily_midday_ratio(series)))[:10]
         pd.Timestamp(out)
@@ -81,10 +81,10 @@ def estimated_date(series: pd.DataFrame) -> str:
 
 
 def make_featurize(date_mode: str = "vera"):
-    """featurize per validate.py: serie ritagliata di un cliente ->
-    (customer_id, cifre giornaliere, data stimata o None se date_mode='vera')."""
+    """featurize for validate.py: cropped series of one customer ->
+    (customer_id, daily figures, estimated date or None if date_mode='vera')."""
     if date_mode not in ("vera", "stimata"):
-        raise ValueError(f"date_mode {date_mode!r}: usare 'vera' o 'stimata'")
+        raise ValueError(f"date_mode {date_mode!r}: use 'vera' (true) or 'stimata' (estimated)")
 
     def featurize(series: pd.DataFrame):
         est = estimated_date(series) if date_mode == "stimata" else None
@@ -97,7 +97,7 @@ featurize = make_featurize("vera")
 
 
 def make_fit_predict(name: str, true_dates: dict):
-    """fit_predict per validate.py: addestra il metodo `name` sugli altri clienti con PV."""
+    """fit_predict for validate.py: trains the method `name` on the other customers with PV."""
     spec = METHODS[name]
     cache: dict = {}
 
@@ -111,7 +111,7 @@ def make_fit_predict(name: str, true_dates: dict):
         cid, daily, est = test_feat
         t = true_dates.get(cid)
         if t is None or pd.isna(t) or daily.empty or t >= daily["date"].max() + DAY:
-            return {"pv_installed": False}  # nessun PV in questa finestra: P non lo conta
+            return {"pv_installed": False}  # no PV in this window: P does not count it
         date = est if est is not None else t.strftime("%Y-%m-%d")
         pv = train_labels[train_labels["pv_installed"]]
         if spec is None:
@@ -128,7 +128,7 @@ def make_fit_predict(name: str, true_dates: dict):
 
 
 def training_table(series: pd.DataFrame, labels: pd.DataFrame, mod) -> pd.DataFrame:
-    """Tabella finale: ogni cliente con PV ritagliato a UNA finestra di 2 anni (come validate)."""
+    """Final table: every customer with PV cropped to ONE 2-year window (as validate)."""
     rng = np.random.default_rng(SEED)
     rows = []
     for r in labels[labels["pv_installed"]].itertuples():
@@ -144,11 +144,11 @@ def training_table(series: pd.DataFrame, labels: pd.DataFrame, mod) -> pd.DataFr
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--method", default="auto", help="auto oppure nomi separati da virgola")
+    ap.add_argument("--method", default="auto", help="auto or comma-separated names")
     ap.add_argument("--date", default="vera", choices=["vera", "stimata"])
-    ap.add_argument("--no-save", action="store_true", help="solo misura, non scrive l'artefatto")
+    ap.add_argument("--no-save", action="store_true", help="measure only, do not write the artifact")
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, then data/raw/pv_labels_dev.csv")
     a = ap.parse_args(argv)
 
     series, labels = load_series(a.series), load_labels(find_labels(a.labels))
@@ -157,11 +157,11 @@ def main(argv: list[str]) -> int:
     asked = AUTO_RUN if a.method == "auto" else a.method.split(",")
     unknown = set(asked) - set(METHODS)
     if unknown:
-        ap.error(f"metodi sconosciuti: {sorted(unknown)}; disponibili: {list(METHODS)}")
+        ap.error(f"unknown methods: {sorted(unknown)}; available: {list(METHODS)}")
     names = ["median"] + [n for n in asked if n != "median"]
 
-    print(f"clienti: {len(labels)} (con PV: {int(labels['pv_installed'].sum())}), "
-          f"validate.py 5 giri x 2 anni, data {a.date}")
+    print(f"customers: {len(labels)} (with PV: {int(labels['pv_installed'].sum())}), "
+          f"validate.py 5 rounds x 2 years, date {a.date}")
     p_mean = {}
     (ROOT / "outputs").mkdir(exist_ok=True)
     for name in names:
@@ -172,12 +172,12 @@ def main(argv: list[str]) -> int:
         p_mean[name] = float(summary["P"].mean())
         days = (pd.to_datetime(tp["pv_installation_date_pred"]) - tp["pv_installation_date"]).dt.days.abs()
         print(f"  {name:15} P {p_mean[name]:.3f} ± {summary['P'].std():.3f}   "
-              f"err. mediano {err.median():.2f}   err < 50%: {(err < 0.5).mean():.0%}"
-              + (f"   err. data mediano {days.median():.0f} gg" if a.date == "stimata" else ""))
+              f"median err. {err.median():.2f}   err < 50%: {(err < 0.5).mean():.0%}"
+              + (f"   median date err. {days.median():.0f} d" if a.date == "stimata" else ""))
 
     best = choose(p_mean) if a.method == "auto" or len(names) > 2 else names[-1]
     if a.no_save:
-        print(f"migliore secondo la regola +{MIN_GAIN}: {best} (artefatto NON modificato)")
+        print(f"best by the +{MIN_GAIN} rule: {best} (artifact NOT modified)")
         return 0
     median_kwp = float(labels.loc[labels["pv_installed"], "pv_capacity_kwp"].median())
     if METHODS[best] is None:
@@ -188,8 +188,8 @@ def main(argv: list[str]) -> int:
     params.update(fallback_kwp=median_kwp, trained_as=best,
                   validation_P={n: round(p, 4) for n, p in p_mean.items()})
     save_params(params, ARTIFACT)
-    print(f"scelto: {best} (P {p_mean[best]:.3f}; mediana {p_mean['median']:.3f}) -> "
-          f"{ARTIFACT.relative_to(ROOT)}, riserva {median_kwp:.1f} kWp")
+    print(f"chosen: {best} (P {p_mean[best]:.3f}; median {p_mean['median']:.3f}) -> "
+          f"{ARTIFACT.relative_to(ROOT)}, fallback {median_kwp:.1f} kWp")
     return 0
 
 

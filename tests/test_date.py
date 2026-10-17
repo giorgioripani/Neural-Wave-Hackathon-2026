@@ -57,7 +57,7 @@ def test_estimate_unsorted_and_short():
 
 
 def test_windows_stay_inside_data(synth):
-    """Finestre di 730 giorni dentro i dati, anche con la data vicino ai bordi."""
+    """730-day windows inside the data, even with the date close to the edges."""
     from src.models.run_date_dev import evaluate_customer
     dates = pd.date_range("2022-01-01", periods=1461, freq="D")
     daily = pd.DataFrame({"date": dates, "midday_ratio": 1.0})
@@ -153,7 +153,7 @@ def test_run_date_dev_main_v2_on_synthetic(synth, tmp_path, monkeypatch, capsys)
 
 
 def _seasonal_step_daily(step_day=400, n=730, noise=0.1, seed=42):
-    """Il calo dopo il gradino e` forte in estate e quasi nullo in inverno."""
+    """The drop after the step is strong in summer and almost zero in winter."""
     rng = np.random.default_rng(seed)
     dates = pd.date_range("2023-01-01", periods=n, freq="D")
     summer = 0.5 * (1 - np.cos(2 * np.pi * (dates.dayofyear.to_numpy() - 15) / 365.25))  # 0 a gennaio, 1 a luglio
@@ -209,9 +209,9 @@ def test_estimate_from_series_synthetic(synth):
 
 
 def test_midday_gaps_no_false_step(synth):
-    """Buchi a mezzogiorno nella seconda meta` (cliente senza PV): niente falso gradino.
-    Buchi grandi (6/12 intervalli, NaN e righe tolte) -> giorno scartato;
-    buchi piccoli (2/12, <= 25%) -> giorno tenuto, la media non cambia livello."""
+    """Midday gaps in the second half (customer without PV): no false step.
+    Large gaps (6/12 intervals, NaN and removed rows) -> day dropped;
+    small gaps (2/12, <= 25%) -> day kept, the mean does not change level."""
     from src.models.date import estimate_v2
     series, labels = synth
     cid = labels.loc[~labels["pv_installed"], "customer_id"].iloc[0]
@@ -243,7 +243,7 @@ def test_midday_gaps_no_false_step(synth):
 
 
 def test_no_gaps_same_as_sum_version_up_to_constant(synth):
-    """Senza buchi, log(midday_ratio) a medie = vecchia versione a somme + costante."""
+    """Without gaps, log(midday_ratio) with means = old sum-based version + constant."""
     from src.models.date import EPS_KWH, MIDDAY_UTC_HOURS, NIGHT_UTC_HOURS
     series, _ = synth
     one = series[series["customer_id"] == "POD0000"]
@@ -260,7 +260,7 @@ def test_no_gaps_same_as_sum_version_up_to_constant(synth):
 
 
 def _daily_steps(steps, days=730, seed=42):
-    """SINTETICO: log(midday_ratio) = onda stagionale + gradini (giorno, salto) + rumore."""
+    """SYNTHETIC: log(midday_ratio) = seasonal wave + steps (day, jump) + noise."""
     rng = np.random.default_rng(seed)
     t = np.arange(days)
     y = 0.2 * np.cos(2 * np.pi * t / 365.25) + 0.1 * rng.standard_normal(days)
@@ -276,8 +276,8 @@ def _day(d):
 
 def test_v4_two_steps_returns_first():
     from src.models.date import estimate_v2, estimate_v4
-    daily = _daily_steps([(200, -0.5), (450, -1.0)])  # il secondo gradino e` il piu` grande
-    assert abs((pd.Timestamp(estimate_v2(daily)) - pd.Timestamp(_day(450))).days) <= 3  # v2 sceglie il grande
+    daily = _daily_steps([(200, -0.5), (450, -1.0)])  # the second step is the larger one
+    assert abs((pd.Timestamp(estimate_v2(daily)) - pd.Timestamp(_day(450))).days) <= 3  # v2 picks the larger one
     assert abs((pd.Timestamp(estimate_v4(daily)) - pd.Timestamp(_day(200))).days) <= 3
 
 
@@ -299,13 +299,13 @@ def test_run_date_dev_v4_compares_with_v2_only():
     assert COMPARE["v4"] == ["v2"] and COMPARE["v2"] == ["v1", "v3"]
 
 
-# --- estimate_cfg: aggregazione dei giorni ---
+# --- estimate_cfg: aggregation of the days ---
 
 def _weekend_series(install_day=300, days=730, seed=42):
-    """SINTETICA, UTC: notte 0,2 kWh; mezzogiorno 0,4 kWh nei feriali e 0,05 nel fine
-    settimana (casa vuota), con rumore; dal giorno install_day mezzogiorno x 0,6."""
+    """SYNTHETIC, UTC: night 0.2 kWh; midday 0.4 kWh on weekdays and 0.05 at the
+    weekend (empty building), with noise; from day install_day midday x 0.6."""
     rng = np.random.default_rng(seed)
-    idx = pd.date_range("2023-01-02", periods=days * 96, freq="15min", tz="UTC")  # lunedi`
+    idx = pd.date_range("2023-01-02", periods=days * 96, freq="15min", tz="UTC")  # Monday
     day = np.arange(len(idx)) // 96
     mid = (idx.hour >= 10) & (idx.hour < 13)
     weekend = idx.dayofweek >= 5
@@ -318,7 +318,7 @@ def test_cfg_all_identical_to_v2(synth):
     from src.models.date import estimate_cfg, estimate_v2
     series, _ = synth
     cases = [daily_midday_ratio(series[series["customer_id"] == c]) for c in series["customer_id"].unique()]
-    cases += [_daily_steps([(200, -0.5)]).iloc[::3], _daily_steps([])]  # con buchi e senza gradino
+    cases += [_daily_steps([(200, -0.5)]).iloc[::3], _daily_steps([])]  # with gaps and without a step
     for daily in cases:
         assert estimate_cfg(daily, "all") == estimate_v2(daily)
     assert estimate_cfg(cases[0]) == estimate_v2(cases[0])  # default "all"
@@ -343,7 +343,7 @@ def test_cfg_weekdays_finds_date_with_low_weekends():
 def test_cfg_weekly_median_drops_short_weeks():
     from src.models.date import _weekly_median
     d = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=14, freq="D"), "midday_ratio": np.arange(14.0)})
-    d = d.drop(index=[7, 8, 9, 10])  # seconda settimana: 3 giorni validi
+    d = d.drop(index=[7, 8, 9, 10])  # second week: 3 valid days
     w = _weekly_median(d)
     assert list(w["date"]) == [pd.Timestamp("2024-01-01")] and w["midday_ratio"].iloc[0] == 3.0
 
@@ -351,8 +351,8 @@ def test_cfg_weekly_median_drops_short_weeks():
 def test_cfg_no_step_returns_first_day_and_bad_agg():
     from src.models.date import estimate_cfg
     daily = _daily_steps([])
-    # domenica: primo giorno di daily, non del filtro. Solo weekdays: con ~104 righe
-    # settimanali la regola del 5% si supera piu` facilmente sul rumore (limite noto).
+    # Sunday: first day of daily, not of the filter. Only weekdays: with ~104 weekly
+    # rows the 5% rule is passed more easily on noise (known limit).
     assert estimate_cfg(daily, "weekdays") == "2023-01-01"
     flat = daily.assign(midday_ratio=1.0)
     assert estimate_cfg(flat, "weekly_median") == "2023-01-01"
@@ -368,12 +368,12 @@ def test_compare_agg_stats():
                         "err_weekly_median": [20, 20, 20, np.nan]})
     r = compare_agg(per, reps=500)
     assert r["mean"]["weekdays"] == pytest.approx(0.7)
-    assert (r["weekdays"]["better"], r["weekdays"]["worse"]) == (3, 1)  # 6 gg in meno conta, 15 in piu` conta
+    assert (r["weekdays"]["better"], r["weekdays"]["worse"]) == (3, 1)  # 6 d less counts, 15 more counts
     lo, hi = r["weekdays"]["ci"]
     assert lo <= r["weekdays"]["diff"] <= hi and lo >= -0.4 and hi <= 0.4
     assert r["weekly_median"]["ci"] == (0.0, 0.0) and r["weekly_median"]["better"] == 0
-    # LOCO: senza il cliente 4 weekdays vince (0,9 > 0,5); senza uno dei primi tre la media
-    # degli altri e` (0,9 + 0,9 + 0,1) / 3 = 0,633 > 0,5: sempre weekdays
+    # LOCO: without customer 4 weekdays wins (0.9 > 0.5); without one of the first three the mean
+    # of the others is (0.9 + 0.9 + 0.1) / 3 = 0.633 > 0.5: always weekdays
     assert r["chosen"] == {"all": 0, "weekdays": 4, "weekly_median": 0}
     assert r["nested"] == pytest.approx(0.7)
 
@@ -389,8 +389,8 @@ def test_compare_agg_tie_goes_to_all():
 # --- estimate_refined ---
 
 def _winter_peak(step_day, seed, days=730, width=40):
-    """SINTETICO: log(midday_ratio) = picco invernale stretto (gaussiano attorno al
-    15 gennaio, NON sinusoidale) + gradino -0,5 al giorno step_day + rumore."""
+    """SYNTHETIC: log(midday_ratio) = narrow winter peak (Gaussian around
+    15 January, NOT sinusoidal) + step -0.5 on day step_day + noise."""
     rng = np.random.default_rng(seed)
     dates = pd.date_range("2023-01-01", periods=days, freq="D")
     doy = dates.dayofyear.to_numpy()
@@ -428,14 +428,14 @@ def test_compare_refined_variants():
     assert list(REFINED_METHODS) == ["v2", "refined"]
     per = pd.DataFrame({"D_v2": [0.5, 0.5], "D_refined": [0.5, 0.5], "err_v2": [10, 10], "err_refined": [3, 20]})
     r = compare_agg(per, reps=10, variants=REFINED_METHODS)
-    assert r["chosen"] == {"v2": 2, "refined": 0}  # parita`: vince v2
+    assert r["chosen"] == {"v2": 2, "refined": 0}  # tie: v2 wins
     assert (r["refined"]["better"], r["refined"]["worse"]) == (1, 1)
 
 
 # --- run_date_dev: --protocol last730 e --nested-all ---
 
 def _pv_series(cid, days, install_day, seed=42):
-    """SINTETICA, UTC: notte 0,2 kWh, mezzogiorno 0,4 kWh, dal giorno install_day 0,2."""
+    """SYNTHETIC, UTC: night 0.2 kWh, midday 0.4 kWh, from day install_day 0.2."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2022-01-01", periods=days * 96, freq="15min", tz="UTC")
     day = np.arange(len(idx)) // 96
@@ -457,7 +457,7 @@ def test_evaluate_last730_true_before():
     inside = evaluate_last730(last730_daily(_pv_series("A", 1000, 600)), pd.Timestamp("2022-01-01") + pd.Timedelta(days=600))
     assert not inside["true_before"] and abs(inside["err_days"]) <= 3 and inside["score"] > 0.9
     before = evaluate_last730(last730_daily(_pv_series("B", 1000, 100)), pd.Timestamp("2022-04-11"))
-    assert before["true_before"] and before["pred_date"] == str(before["win_start"])  # nessun gradino: primo giorno
+    assert before["true_before"] and before["pred_date"] == str(before["win_start"])  # no step: first day
 
 
 def test_last730_summary_and_nested_all():
@@ -469,10 +469,10 @@ def test_last730_summary_and_nested_all():
     assert sm["n_before"] == 2 and sm["D_before"] == pytest.approx(0.1) and sm["D_inside"] == pytest.approx(0.75)
     assert list(NESTED_ALL)[0] == "v2" and {"v1", "v3", "v4", "weekdays", "weekly_median", "refined"} <= set(NESTED_ALL)
     per = pd.DataFrame({f"D_{m}": [0.5, 0.5, 0.5] for m in NESTED_ALL} | {f"err_{m}": [1, 1, 1] for m in NESTED_ALL})
-    assert nested_all(per)["chosen"]["v2"] == 3  # tutto pari: vince la v2
+    assert nested_all(per)["chosen"]["v2"] == 3  # all tied: v2 wins
     per["D_v4"] = [0.9, 0.9, 0.1]
     r = nested_all(per)
-    # senza il cliente 1 o 2: v4 = (0,9 + 0,1) / 2 = 0,5, pari alla v2 -> v2; senza il 3: v4 = 0,9
+    # without customer 1 or 2: v4 = (0.9 + 0.1) / 2 = 0.5, tied with v2 -> v2; without 3: v4 = 0.9
     assert (r["chosen"]["v2"], r["chosen"]["v4"]) == (2, 1)
     assert r["nested"] == pytest.approx((0.5 + 0.5 + 0.1) / 3)
 
@@ -494,8 +494,8 @@ def test_run_date_dev_last730_and_nested_all(tmp_path, monkeypatch, capsys):
         assert run_date_dev.main() == 0
         out = capsys.readouterr().out.strip().splitlines()
         assert len(out) == n_lines
-    assert "Data vera prima della finestra: 1 clienti" in out[1]
-    assert out[2].startswith("Selezione annidata LOCO su tutte (last730)")
+    assert "True date before the window: 1 customers" in out[1]
+    assert out[2].startswith("Nested LOCO selection over all (last730)")
     pc = pd.read_csv(tmp_path / "o_per_version.csv")
     assert len(pc) == 2 and "D_refined" in pc.columns
     monkeypatch.setattr(sys, "argv", base + ["--protocol", "last730", "--refine"])
@@ -515,7 +515,7 @@ def test_protocol_windows_shapes():
     assert len(last) == 1 and len(last[0][0]) == 730
     win = protocol_windows(s, true, "windows")
     assert len(win) == len(POSITIONS)
-    for daily_w, series_w in win:  # la serie della finestra copre gli stessi giorni del daily
+    for daily_w, series_w in win:  # the window series covers the same days as daily
         days = pd.to_datetime(series_w["ts_epoch"], unit="s").dt.normalize()
         assert set(days.dt.date) == set(daily_w["date"]) and len(daily_w) == 730
 
@@ -545,12 +545,12 @@ def test_final_refine_uses_same_window(monkeypatch):
     for protocol, n_win in (("windows", 3), ("last730", 1), ("full", 1)):
         seen.clear()
         got = run_date_dev.final_per_customer(s, true, protocol)
-        assert len(seen) == 2 * n_win  # v2_refine e refined_refine, una volta per finestra
+        assert len(seen) == 2 * n_win  # v2_refine and refined_refine, once per window
         wins = run_date_dev.protocol_windows(s, true, protocol)
         expected = [(pd.to_datetime(w[1]["ts_epoch"], unit="s").min(), pd.to_datetime(w[1]["ts_epoch"], unit="s").max())
                     for w in wins]
         assert sorted(set(seen)) == sorted(set(expected))
-        assert got["D_v2_refine"] < got["D_v2"]  # il finto refine sposta la data al 2022-01-01
+        assert got["D_v2_refine"] < got["D_v2"]  # the fake refine moves the date to 2022-01-01
 
 
 def test_run_date_dev_compare_final(tmp_path, monkeypatch, capsys):
@@ -570,10 +570,10 @@ def test_run_date_dev_compare_final(tmp_path, monkeypatch, capsys):
         assert run_date_dev.main() == 0
         out = capsys.readouterr().out.strip().splitlines()
         assert len(out) == 5 and len(out) <= 10
-        assert out[0].startswith(f"Protocollo {protocol}: clienti 2")
+        assert out[0].startswith(f"Protocol {protocol}: customers 2")
         assert out[1].startswith("refined:") and out[2].startswith("v2_refine:") and out[3].startswith("refined_refine:")
-        assert "scelte: v2 " in out[4]
-        assert out[2].split(", diff D ")[1].startswith("+0.000")  # refine finto che non cambia nulla
+        assert "choices: v2 " in out[4]
+        assert out[2].split(", diff D ")[1].startswith("+0.000")  # fake refine that changes nothing
     monkeypatch.setattr(sys, "argv", base + ["--nested-all"])
     with pytest.raises(SystemExit):
         run_date_dev.main()
@@ -593,5 +593,5 @@ def test_protocol_full_with_nested_all(tmp_path, monkeypatch, capsys):
                                       "--out", str(tmp_path / "o.csv")])
     assert run_date_dev.main() == 0
     out = capsys.readouterr().out.strip().splitlines()
-    assert out[0].startswith("Protocollo full") and "Data vera prima della finestra: 0 clienti" in out[1]
+    assert out[0].startswith("Protocol full") and "True date before the window: 0 customers" in out[1]
     assert len(out) == 4

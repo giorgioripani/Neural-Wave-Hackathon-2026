@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Entry point: python inference.py path/test.csv
 
-Scrive nella cartella corrente:
+Writes to the current folder:
 - predictions.csv                  customer_id;pv_installed;pv_installation_date;pv_capacity_kwp
 - pv_extensions_predictions.csv    customer_id;extension_date;pv_capacity_after_extension_kwp
 
-Una riga per ogni customer_id del test (nessuno scartato). Ogni modulo di
-src/models/ e` chiamato dentro try/except: se manca o fallisce si usano valori
-di riserva. Niente rete, niente data/: gli artefatti stanno in artifacts/.
+One row for every customer_id of the test file (none dropped). Every module of
+src/models/ is called inside try/except: if it is missing or fails, fallback
+values are used. No network, no data/: the trained artifacts are in artifacts/.
 """
 import csv
 import importlib
@@ -17,9 +17,9 @@ import sys
 import traceback
 from pathlib import Path
 
-# Pacchetti importati dalla pipeline: {nome pip: nome import}. Si controllano
-# prima di tutto, cosi` un ambiente incompleto si vede subito; si va avanti con
-# le riserve (senza pandas pero` il programma non puo` leggere il test).
+# Packages imported by the pipeline: {pip name: import name}. Checked first, so an
+# incomplete environment shows up at once; the program then goes on with the
+# fallbacks (without pandas, however, it cannot read the test file).
 PACKAGES = {"numpy": "numpy", "pandas": "pandas", "scipy": "scipy", "scikit-learn": "sklearn",
             "pyarrow": "pyarrow", "duckdb": "duckdb", "ruptures": "ruptures"}
 
@@ -31,8 +31,8 @@ def check_packages() -> list[str]:
             importlib.import_module(mod)
         except Exception:
             missing.append(pip_name)
-            print(f"ATTENZIONE: manca il pacchetto {pip_name}, "
-                  "installare con pip install -r requirements.txt", file=sys.stderr)
+            print(f"WARNING: missing package {pip_name}, "
+                  "install it with pip install -r requirements.txt", file=sys.stderr)
     return missing
 
 
@@ -48,12 +48,12 @@ PRED_HEADER = ["customer_id", "pv_installed", "pv_installation_date", "pv_capaci
 EXT_HEADER = ["customer_id", "extension_date", "pv_capacity_after_extension_kwp"]
 SEP = ";"
 PV_THRESHOLD = 0.5
-EXT_TOP_K = 3  # righe di estensione scritte in tutto (le piu` sicure, extensions.top_k)
-FALLBACK_MEDIAN_KWP = 169.5  # mediana dei kWp di sviluppo, se manca l'artefatto
+EXT_TOP_K = 3  # extension rows written in total (the most confident ones, extensions.top_k)
+FALLBACK_MEDIAN_KWP = 169.5  # median kWp of the development set, if the artifact is missing
 
 
 def default_kwp() -> float:
-    """Mediana dei kWp di sviluppo salvata da train_capacity in artifacts/capacity.json."""
+    """Median development kWp saved by train_capacity in artifacts/capacity.json."""
     try:
         kwp = float(json.loads((ARTIFACTS / "capacity.json").read_text(encoding="utf-8"))["median"])
         return kwp if kwp > 0 else FALLBACK_MEDIAN_KWP
@@ -61,21 +61,21 @@ def default_kwp() -> float:
         return FALLBACK_MEDIAN_KWP
 
 
-# Se detect dice TRUE ma capacity fallisce, un kWp vuoto vale 0 punti: si usa la mediana.
+# If detect says TRUE but capacity fails, an empty kWp scores 0 points: use the median.
 DEFAULT_KWP = default_kwp()
 
 
 def read_test(path: Path) -> tuple[pd.DataFrame, list[str]]:
-    """CSV del test -> (df, all_ids) con src.loading.load.load_test: lettore tollerante
-    (righe con epoch non valido tolte, kWh non numerici NaN, separatore e decimale
-    riconosciuti). df ha i nomi del file e quelli dell'interfaccia (kwh, ts_epoch,
-    ts_local); all_ids = tutti gli id del file, anche quelli rimasti senza righe."""
+    """Test CSV -> (df, all_ids) with src.loading.load.load_test: tolerant reader
+    (rows with an invalid epoch dropped, non-numeric kWh as NaN, separator and decimal
+    mark detected). df has the file's column names and the interface ones (kwh, ts_epoch,
+    ts_local); all_ids = every id of the file, including those left without valid rows."""
     from src.loading.load import load_test
     return load_test(path)
 
 
 def emergency_ids(path: Path) -> list[str]:
-    """Solo gli id del file, con il modulo csv (se anche load_test fallisce)."""
+    """Only the ids of the file, read with the csv module (if load_test fails too)."""
     ids = set()
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         lines = iter(f)
@@ -93,62 +93,62 @@ def emergency_ids(path: Path) -> list[str]:
 def load_module(name: str):
     try:
         return importlib.import_module(f"src.models.{name}")
-    except Exception as e:  # modulo mancante o rotto: si va con le riserve
-        print(f"[riserva] src.models.{name} non disponibile: {type(e).__name__}: {e}")
+    except Exception as e:  # missing or broken module: use the fallbacks
+        print(f"[fallback] src.models.{name} not available: {type(e).__name__}: {e}")
         return None
 
 
 def warn(what: str, cid: str, e: Exception) -> None:
-    print(f"[riserva] {what} fallito per un cliente: {type(e).__name__}: {e}", file=sys.stderr)
+    print(f"[fallback] {what} failed for one customer: {type(e).__name__}: {e}", file=sys.stderr)
     if "--debug" in sys.argv:
         traceback.print_exc()
 
 
-# --- Adattatori: un punto solo dove si adattano le firme dei moduli ---------
+# --- Adapters: the single place where module signatures are adapted --------
 
 def call_detect(mod, df: pd.DataFrame) -> dict:
-    """detect.predict(serie di tutti i clienti) -> {customer_id: probabilita`}."""
+    """detect.predict(series of all customers) -> {customer_id: probability}."""
     out = {}
     for k, v in dict(mod.predict(df)).items():
         try:
             out[str(k)] = float(v)
         except (TypeError, ValueError):
-            out[str(k)] = float("nan")  # valore illeggibile: come un cliente mancante
+            out[str(k)] = float("nan")  # unreadable value: treated like a missing customer
     return out
 
 
 def call_date(mod, series: pd.DataFrame) -> str:
-    """date.estimate(daily_midday_ratio(serie del cliente)) -> 'AAAA-MM-GG'."""
+    """date.estimate(daily_midday_ratio(customer series)) -> 'YYYY-MM-DD'."""
     daily = mod.daily_midday_ratio(series) if hasattr(mod, "daily_midday_ratio") else series
     out = mod.estimate(daily)
-    ts = pd.Timestamp(out)  # valida il formato
-    if pd.isna(ts):  # NaT o None: si usa la riserva, mai "NaT" nel file
-        raise ValueError(f"data non valida: {out!r}")
+    ts = pd.Timestamp(out)  # validates the format
+    if pd.isna(ts):  # NaT or None: use the fallback, never "NaT" in the file
+        raise ValueError(f"invalid date: {out!r}")
     return ts.strftime("%Y-%m-%d")
 
 
 def call_capacity(mod, series: pd.DataFrame, date: str) -> float:
-    """capacity.estimate(serie del cliente, data) -> kWp."""
+    """capacity.estimate(customer series, date) -> kWp."""
     kwp = float(mod.estimate(series, date))
     if not (kwp > 0 and math.isfinite(kwp)):
-        raise ValueError(f"kWp non valido: {kwp}")
+        raise ValueError(f"invalid kWp: {kwp}")
     return kwp
 
 
 def call_extensions(mod, series: pd.DataFrame, date: str, kwp: float) -> list[dict]:
-    """extensions.predict_extensions_refined(serie del cliente, data, kWp) ->
-    [{date 'AAAA-MM-GG', kwp_after (kWp totali), strength}], controllati."""
+    """extensions.predict_extensions_refined(customer series, date, kWp) ->
+    [{date 'YYYY-MM-DD', kwp_after (total kWp), strength}], validated."""
     out = []
     for e in mod.predict_extensions_refined(series, date, kwp):
         kwp_after = float(e["kwp_after"])
         if not (kwp_after > 0 and kwp_after < float("inf")):
-            raise ValueError(f"kWp dopo l'estensione non valido: {kwp_after}")
+            raise ValueError(f"invalid kWp after extension: {kwp_after}")
         out.append({"date": pd.Timestamp(e["date"]).strftime("%Y-%m-%d"),
                     "kwp_after": kwp_after, "strength": float(e["strength"])})
     return out
 
 
-FALLBACK_DATE = "2024-01-01"  # solo se un cliente non ha nessuna misura valida
+FALLBACK_DATE = "2024-01-01"  # only if a customer has no valid measurement at all
 
 
 def first_day(series: pd.DataFrame, default: str = FALLBACK_DATE) -> str:
@@ -159,9 +159,9 @@ def first_day(series: pd.DataFrame, default: str = FALLBACK_DATE) -> str:
 # ---------------------------------------------------------------------------
 
 def predict_all(df: pd.DataFrame, used: dict | None = None, customers: list[str] | None = None) -> list[dict]:
-    """Una riga per cliente di `customers` (default: quelli di df), anche senza
-    righe valide in df. Se `used` e` un dict, vi scrive quanti clienti hanno usato
-    la riserva di detect, date e capacity."""
+    """One row per customer of `customers` (default: those in df), even without
+    valid rows in df. If `used` is a dict, it receives how many customers used
+    the detect, date and capacity fallbacks."""
     used = {} if used is None else used
     used.update(detect=0, date=0, capacity=0)
     if customers is None:
@@ -170,7 +170,7 @@ def predict_all(df: pd.DataFrame, used: dict | None = None, customers: list[str]
     file_day = first_day(df)
     detect, date_mod, capacity = load_module("detect"), load_module("date"), load_module("capacity")
 
-    # Riserva di detect: TRUE per tutti (sul dev "tutti TRUE" vale 57,8 punti, "tutti FALSE" 0).
+    # Detect fallback: TRUE for everyone (on dev "all TRUE" scores 57.8 points, "all FALSE" 0).
     probs = None
     if detect is not None:
         try:
@@ -178,14 +178,14 @@ def predict_all(df: pd.DataFrame, used: dict | None = None, customers: list[str]
         except Exception as e:
             warn("detect", "*", e)
     if probs is None:
-        print("[riserva] detect non disponibile: tutti TRUE")
+        print("[fallback] detect not available: all TRUE")
         probs = {}
         used["detect"] = len(customers)
     else:
         n_missing = sum(1 for c in customers if pd.isna(probs.get(c)))
         used["detect"] = n_missing
         if n_missing:
-            print(f"[riserva] detect: {n_missing} clienti senza probabilita', messi TRUE")
+            print(f"[fallback] detect: {n_missing} customers without probability, set to TRUE")
 
     rows = []
     for cid in customers:
@@ -221,24 +221,24 @@ def predict_all(df: pd.DataFrame, used: dict | None = None, customers: list[str]
 
 def predict_extensions_all(df: pd.DataFrame, rows: list[dict], used: dict | None = None,
                            k: int = EXT_TOP_K) -> list[dict]:
-    """Estensioni (bonus) dei clienti con pv_installed=TRUE, partendo da data e kWp
-    gia` decisi in `rows` (che non vengono modificate). -> righe di EXT_HEADER, le k
-    piu` sicure secondo extensions.top_k. used["ext"] = clienti senza estensioni
-    per errore (tutti i clienti TRUE se il modulo manca)."""
+    """Extensions (bonus) of the customers with pv_installed=TRUE, starting from the date
+    and kWp already decided in `rows` (which are not modified). -> EXT_HEADER rows, the k
+    most confident according to extensions.top_k. used["ext"] = customers without
+    extensions because of an error (all TRUE customers if the module is missing)."""
     used = {} if used is None else used
     pv_rows = [r for r in rows if r["pv_installed"]]
     used["ext"] = 0
     mod = load_module("extensions")
     if mod is None:
         used["ext"] = len(pv_rows)
-        print("[riserva] extensions non disponibile: solo intestazione")
+        print("[fallback] extensions not available: header only")
         return []
     by_cid = dict(tuple(df.groupby("customer_id", sort=False)))
     found = []
     for r in pv_rows:
         cid = r["customer_id"]
         if cid not in by_cid:
-            continue  # nessuna misura valida: nessuna estensione
+            continue  # no valid measurement: no extension
         try:
             exts = call_extensions(mod, by_cid[cid], r["pv_installation_date"], float(r["pv_capacity_kwp"]))
         except Exception as e:
@@ -250,7 +250,7 @@ def predict_extensions_all(df: pd.DataFrame, rows: list[dict], used: dict | None
         best = mod.top_k(found, k=k)
     except Exception as e:
         warn("extensions.top_k", "*", e)
-        print("[riserva] extensions.top_k fallito: solo intestazione")
+        print("[fallback] extensions.top_k failed: header only")
         return []
     return [{"customer_id": e["customer_id"], "extension_date": e["date"],
              "pv_capacity_after_extension_kwp": round(float(e["kwp_after"]), 2)} for e in best]
@@ -273,7 +273,7 @@ def write_outputs(rows: list[dict], ext_rows: list[dict], out_dir: Path = Path("
 
 
 def fallback_rows(ids: list[str]) -> list[dict]:
-    """Ultima riserva: tutti TRUE (sul dev vale 57,8 contro 0 di tutti FALSE)."""
+    """Last-resort fallback: all TRUE (57.8 on dev, against 0 for all FALSE)."""
     return [{"customer_id": c, "pv_installed": True, "pv_installation_date": FALLBACK_DATE,
              "pv_capacity_kwp": round(DEFAULT_KWP, 2)} for c in ids]
 
@@ -281,7 +281,7 @@ def fallback_rows(ids: list[str]) -> list[dict]:
 def main(argv: list[str]) -> int:
     args = [a for a in argv if not a.startswith("--")]
     if len(args) != 1:
-        print("Uso: python inference.py path/test.csv [--debug]", file=sys.stderr)
+        print("Usage: python inference.py path/test.csv [--debug]", file=sys.stderr)
         return 1
     path = Path(args[0])
     used, rows, ext_rows, all_ids = {}, None, [], None
@@ -289,9 +289,9 @@ def main(argv: list[str]) -> int:
         df, all_ids = read_test(path)
         rows = predict_all(df, used, all_ids)
         ext_rows = predict_extensions_all(df, rows, used)
-    except Exception as e:  # rete di sicurezza: predictions.csv va scritto comunque
+    except Exception as e:  # safety net: predictions.csv is written in any case
         warn("pipeline", "*", e)
-        print("ATTENZIONE: pipeline fallita, si scrive la riserva (tutti TRUE)")
+        print("WARNING: pipeline failed, writing the fallback (all TRUE)")
         if rows is None:
             ids = all_ids
             if ids is None:
@@ -305,12 +305,12 @@ def main(argv: list[str]) -> int:
         used.setdefault("detect", len(rows))
     write_outputs(rows, ext_rows)
     n_pv = sum(r["pv_installed"] for r in rows)
-    print(f"predictions.csv: {len(rows)} clienti ({n_pv} con fotovoltaico)")
-    print(f"pv_extensions_predictions.csv: {len(ext_rows)} estensioni")
-    print(f"Riserve usate: detect {used.get('detect', 0)}, date {used.get('date', 0)}, "
+    print(f"predictions.csv: {len(rows)} customers ({n_pv} with PV)")
+    print(f"pv_extensions_predictions.csv: {len(ext_rows)} extensions")
+    print(f"Fallbacks used: detect {used.get('detect', 0)}, date {used.get('date', 0)}, "
           f"capacity {used.get('capacity', 0)}, ext {used.get('ext', 0)}")
     if any(used.values()):
-        print("ATTENZIONE: alcune previsioni usano le riserve, controllare i messaggi sopra")
+        print("WARNING: some predictions use fallbacks, check the messages above")
     return 0
 
 

@@ -1,12 +1,12 @@
-"""Punteggio ufficiale del bonus estensioni (PDF, sezione 4.3).
+"""Official score of the extensions bonus (challenge PDF, section 4.3).
 
-Bonus = F1_ext x (7 + 1,5 x D_ext + 1,5 x P_ext), da 0 a 10, mai negativo.
-Una previsione abbina un'estensione vera dello stesso cliente se la data dista al
-massimo 30 giorni; abbinamento uno a uno, prima il massimo numero di coppie, poi il
-minimo errore totale in giorni. Previsioni non abbinate (anche doppie) = FP.
-D_ext e P_ext sono medie sulle coppie abbinate (date_score e capacity_score di score.py).
+Bonus = F1_ext x (7 + 1.5 x D_ext + 1.5 x P_ext), from 0 to 10, never negative.
+A prediction matches a true extension of the same customer if the dates are at most
+30 days apart; one-to-one matching, first the largest number of pairs, then the
+smallest total error in days. Unmatched predictions (duplicates too) = FP.
+D_ext and P_ext are means over the matched pairs (date_score and capacity_score of score.py).
 
-Uso: python src/eval/score_ext.py pv_extensions_predictions.csv pv_extensions_labels_dev.csv
+Usage: python src/eval/score_ext.py pv_extensions_predictions.csv pv_extensions_labels_dev.csv
 """
 import csv
 import sys
@@ -24,8 +24,8 @@ COLS = ["customer_id", "extension_date", "pv_capacity_after_extension_kwp"]
 
 
 def read_ext(path) -> pd.DataFrame:
-    """CSV di estensioni (previsioni o etichette) -> COLS, id come stringa, data come Timestamp.
-    Separatore riga per riga (nel file di sviluppo l'intestazione usa , e i dati ;)."""
+    """Extensions CSV (predictions or labels) -> COLS, id as string, date as Timestamp.
+    Separator detected line by line (in the development file the header uses , and the data ;)."""
     with open(path, newline="", encoding="utf-8-sig") as f:
         lines = [ln.rstrip("\r\n") for ln in f if ln.strip()]
     rows = [next(csv.reader([ln], delimiter=";" if ";" in ln else ",")) for ln in lines]
@@ -40,9 +40,9 @@ def read_ext(path) -> pd.DataFrame:
 
 
 def match(pred: pd.DataFrame, true: pd.DataFrame) -> list[tuple[int, int]]:
-    """Coppie (indice pred, indice true) abbinate, cliente per cliente."""
+    """Matched (pred index, true index) pairs, customer by customer."""
     pairs = []
-    big = 10 ** 6  # ogni coppia valida vale piu` di qualsiasi somma di errori in giorni
+    big = 10 ** 6  # every valid pair is worth more than any sum of errors in days
     for cid, t in true.groupby("customer_id"):
         p = pred[pred["customer_id"] == cid]
         if p.empty:

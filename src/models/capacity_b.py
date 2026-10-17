@@ -1,33 +1,33 @@
-"""Task 3, METODO B: stima "fisica" del picco solare x una costante.
+"""Task 3, METHOD B: "physical" estimate of the solar peak x a constant.
 
 Idea
 ----
-Il PV non si vede direttamente: vediamo solo il PRELIEVO dalla rete. Ma dopo la
-messa in servizio, a mezzogiorno, il prelievo scende di quanto il PV copre del
-consumo. Stimiamo quindi, per ogni giorno estivo dopo la data:
+PV is not seen directly: only the WITHDRAWAL from the grid is. But after
+commissioning, at midday, the withdrawal drops by the part of the consumption
+covered by PV. So, for every summer day after the date:
 
-    baseline_senza_PV = (rapporto mezzogiorno/notte di riferimento) x notte del giorno
-    deficit_kW        = baseline_senza_PV - prelievo di mezzogiorno
+    baseline_without_PV = (reference midday/night ratio) x night of the day
+    deficit_kW          = baseline_without_PV - midday withdrawal
 
-La notte non vede il sole e segue il livello di attivita` del cliente, quindi la
-baseline si adatta ai cambi di consumo (ferie, crescita dell'azienda).
-Rapporto di riferimento: giorni PRIMA della data; se mancano (data all'inizio
-della serie di 2 anni) i mesi invernali DOPO la data, dove il PV produce poco
-(stima piu` debole, has_pre=0).
+The night sees no sun and follows the customer's activity level, so the
+baseline adapts to consumption changes (holidays, company growth).
+Reference ratio: days BEFORE the date; if missing (date at the start of the
+2-year series) the winter months AFTER the date, when PV produces little
+(weaker estimate, has_pre=0).
 
-Dal deficit si prende un picco robusto (90-esimo percentile, peak_kw) e
+A robust peak is taken from the deficit (90th percentile, peak_kw) and
 
-    kWp = k x peak_kw,   k = mediana di (kWp vero / peak_kw) sui clienti di training
+    kWp = k x peak_kw,   k = median of (true kWp / peak_kw) over the training customers
 
-Un solo parametro: con 22 clienti etichettati e` difficile andare in overfitting.
+A single parameter: with 22 labelled customers overfitting is hard.
 
-Varianti (stessa interfaccia, scelte con `form`):
-    "ratio"   kWp = k x feature                    (metodo B vero e proprio)
-    "linear"  kWp = a + b x feature                (traguardo di Giorgio, DEFAULT: vedi sotto)
+Variants (same interface, chosen with `form`):
+    "ratio"   kWp = k x feature                    (method B proper)
+    "linear"  kWp = a + b x feature                (DEFAULT: see below)
     "loglog"  log kWp = a + b x log feature
 
-Limite noto: se il PV supera il consumo il prelievo si ferma a zero e il deficit
-non puo` superare il consumo -> sottostima degli impianti grandi rispetto al carico.
+Known limit: if PV exceeds consumption the withdrawal stops at zero and the deficit
+cannot exceed consumption -> plants that are large relative to the load are underestimated.
 """
 from __future__ import annotations
 
@@ -39,24 +39,24 @@ import pandas as pd
 from src.models.capacity_common import daily_kw, deficit, midday_ratio, split_days
 
 NAME = "b"
-# Default = variante lineare: nel primo confronto "ratio" su peak_kw ha dato P medio
-# 0,10-0,25 contro 0,27-0,39 della lineare, perche` il picco satura (vedi docs/LOG.md).
+# Default = linear variant: in the first comparison "ratio" on peak_kw gave mean P
+# 0.10-0.25 against 0.27-0.39 for the linear one, because the peak saturates (see docs/LOG.md).
 DEFAULT_FEATURE, DEFAULT_FORM = "drop_kw", "linear"
 
 
 def features(series: pd.DataFrame, install_date: str) -> dict[str, float]:
-    """Serie a 15 min di UN cliente + data 'AAAA-MM-GG' -> feature del metodo B."""
+    """15-min series of ONE customer + date 'YYYY-MM-DD' -> method B features."""
     return features_from_daily(daily_kw(series), install_date)
 
 
 def features_from_daily(d: pd.DataFrame, install_date: str) -> dict[str, float]:
-    """Cifre giornaliere (daily_kw) + data -> feature del metodo B.
+    """Daily figures (daily_kw) + date -> method B features.
 
-    peak_kw  90-esimo percentile del deficit giornaliero (giorni estivi dopo la data)
-    drop_kw  media dello stesso deficit
-    mean_kw  potenza media su tutta la serie (solo per confronto)
-    has_pre  1 se il riferimento viene dal "prima", 0 se dall'inverno dopo
-    NaN dove mancano giorni sufficienti.
+    peak_kw  90th percentile of the daily deficit (summer days after the date)
+    drop_kw  mean of the same deficit
+    mean_kw  mean power over the whole series (for comparison only)
+    has_pre  1 if the reference comes from "before", 0 if from the winter after
+    NaN where there are not enough days.
     """
     out = {"peak_kw": math.nan, "drop_kw": math.nan, "has_pre": 0.0,
            "mean_kw": float(d["all_kw"].mean()) if len(d) else math.nan}
@@ -71,16 +71,16 @@ def features_from_daily(d: pd.DataFrame, install_date: str) -> dict[str, float]:
 
 
 def fit(table: pd.DataFrame, feature: str = DEFAULT_FEATURE, form: str = DEFAULT_FORM) -> dict:
-    """Tabella (una riga per cliente: feature + 'kwp') -> parametri JSON-serializzabili."""
+    """Table (one row per customer: feature + 'kwp') -> JSON-serialisable parameters."""
     y = table["kwp"].to_numpy(float)
     x = table[feature].to_numpy(float)
     ok = np.isfinite(x)
     if form in ("ratio", "loglog"):
-        ok &= x > 0  # rapporti e logaritmi hanno senso solo con un deficit positivo
+        ok &= x > 0  # ratios and logarithms only make sense with a positive deficit
     a = b = math.nan
     if ok.sum() >= 3:
         if form == "ratio":
-            b = float(np.median(y[ok] / x[ok]))  # la costante k
+            b = float(np.median(y[ok] / x[ok]))  # the constant k
         elif form == "loglog":
             b, a = np.polyfit(np.log(x[ok]), np.log(y[ok]), 1)
         else:
@@ -92,12 +92,12 @@ def fit(table: pd.DataFrame, feature: str = DEFAULT_FEATURE, form: str = DEFAULT
 
 
 def predict(feat: dict, params: dict) -> float:
-    """Feature di un cliente + parametri -> kWp > 0 (fallback se non calcolabile)."""
+    """Features of one customer + parameters -> kWp > 0 (fallback if not computable)."""
     x, form = feat.get(params["feature"], math.nan), params["form"]
     if not np.isfinite(x) or not np.isfinite(params["b"]):
         return float(params["fallback_kwp"])
     if form in ("ratio", "loglog") and x <= 0:
-        return float(params["fallback_kwp"])  # nessun calo visibile: non sappiamo dire di piu`
+        return float(params["fallback_kwp"])  # no visible drop: nothing more can be said
     if form == "ratio":
         kwp = params["b"] * x
     elif form == "loglog":

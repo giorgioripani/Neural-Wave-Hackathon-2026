@@ -1,12 +1,12 @@
-"""Task 3, metodo TAGLIA: i kWp seguono la taglia del cliente.
+"""Task 3, SIZE method: the kWp follow the size of the customer.
 
-    log kWp = a + b x log(feature di consumo)      (2 parametri)
+    log kWp = a + b x log(consumption feature)      (2 parameters)
 
-Feature, calcolate sui giorni di riferimento "senza PV" di split_days (prima della
-data; se manca, inverno dopo la data):
-    night_ref_kw  potenza media di notte (0-4 UTC): il carico di base, il PV non lo tocca
-    all_ref_kw    potenza media su tutta la giornata
-Senza giorni di riferimento la feature e` NaN e si usa la mediana di training.
+Features, computed on the "no PV" reference days of split_days (before the
+date; if missing, winter after the date):
+    night_ref_kw  mean power at night (0-4 UTC): the base load, untouched by PV
+    all_ref_kw    mean power over the whole day
+Without reference days the feature is NaN and the training median is used.
 """
 from __future__ import annotations
 
@@ -22,12 +22,12 @@ FEATURES = ("night_ref_kw", "all_ref_kw")
 
 
 def features(series: pd.DataFrame, install_date: str) -> dict[str, float]:
-    """Serie a 15 min di UN cliente + data 'AAAA-MM-GG' -> feature di taglia."""
+    """15-min series of ONE customer + date 'YYYY-MM-DD' -> size features."""
     return features_from_daily(daily_kw(series), install_date)
 
 
 def features_from_daily(d: pd.DataFrame, install_date: str) -> dict[str, float]:
-    """Cifre giornaliere (daily_kw) + data -> {night_ref_kw, all_ref_kw} (NaN senza riferimento)."""
+    """Daily figures (daily_kw) + date -> {night_ref_kw, all_ref_kw} (NaN without reference)."""
     ref = split_days(d, install_date)["ref"] if len(d) else None
     if ref is None:
         return {k: math.nan for k in FEATURES}
@@ -35,7 +35,7 @@ def features_from_daily(d: pd.DataFrame, install_date: str) -> dict[str, float]:
 
 
 def fit(table: pd.DataFrame, feature: str = "night_ref_kw") -> dict:
-    """Tabella (una riga per cliente: feature + 'kwp') -> parametri della retta log-log."""
+    """Table (one row per customer: feature + 'kwp') -> parameters of the log-log line."""
     y = table["kwp"].to_numpy(float)
     x = table[feature].to_numpy(float)
     ok = np.isfinite(x) & (x > 0)
@@ -49,7 +49,7 @@ def fit(table: pd.DataFrame, feature: str = "night_ref_kw") -> dict:
 
 
 def predict(feat: dict, params: dict) -> float:
-    """Feature di un cliente + parametri -> kWp > 0 (mediana di training se non calcolabile)."""
+    """Features of one customer + parameters -> kWp > 0 (training median if not computable)."""
     x = feat.get(params["feature"], math.nan)
     if not np.isfinite(x) or x <= 0 or not np.isfinite(params["b"]):
         return float(params["fallback_kwp"])

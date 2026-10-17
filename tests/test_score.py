@@ -33,7 +33,7 @@ def test_capacity_score():
 
 
 def test_pdf_example():
-    # F1 = 0,9, D = 0,8, P = 0,7 -> 83,25 (esempio del PDF)
+    # F1 = 0.9, D = 0.8, P = 0.7 -> 83.25 (example from the PDF)
     assert 0.9 * (70 + 15 * 0.8 + 15 * 0.7) == pytest.approx(83.25)
 
 
@@ -43,8 +43,8 @@ def test_official_score_only_true_positives(tmp_path):
     p.write_text(
         "customer_id,pv_installed,pv_installation_date,pv_capacity_kwp\n"
         "POD001,TRUE,2024-05-16,12.5\n"  # D=0.5, P=0.5
-        "POD002,TRUE,,\n"                # TP con valori mancanti: 0 e resta nella media
-        "POD003,TRUE,2024-01-01,3\n"     # FP: non entra in D e P
+        "POD002,TRUE,,\n"                # TP with missing values: 0 and stays in the mean
+        "POD003,TRUE,2024-01-01,3\n"     # FP: not part of D and P
     )                                    # POD004 assente: FN
     r = official_score(read_predictions(p), lab)
     assert (r["tp"], r["fp"], r["fn"]) == (2, 1, 1)
@@ -97,7 +97,7 @@ def test_prepare_filters_and_types(tmp_path):
 def test_prepare_comma_decimal(tmp_path):
     text = HEADER + "POD001;0,25;2024-01-01 00:00:00;1704064500\n"
     r, _ = run_prepare(tmp_path, text)
-    assert r.returncode != 0  # virgola decimale senza --decimal: errore, non testo
+    assert r.returncode != 0  # decimal comma without --decimal: error, not text
     r, dst = run_prepare(tmp_path, text, "--decimal", ",")
     assert r.returncode == 0, r.stderr
     assert pd.read_parquet(dst)["energy_consumption_kwh"].tolist() == [0.25]
@@ -126,7 +126,7 @@ def test_prepare_sort_flag(tmp_path):
     body = HEADER + "POD002;0.5;x;1704065400\nPOD001;0.25;x;1704064500\n"
     r, dst = run_prepare(tmp_path, body)
     assert r.returncode == 0, r.stderr
-    assert pd.read_parquet(dst)["customer_id"].tolist() == ["POD002", "POD001"]  # ordine del CSV
+    assert pd.read_parquet(dst)["customer_id"].tolist() == ["POD002", "POD001"]  # CSV order
     r, dst = run_prepare(tmp_path, body, "--sort")
     assert pd.read_parquet(dst)["customer_id"].tolist() == ["POD001", "POD002"]
 
@@ -141,7 +141,7 @@ def test_date_score():
 
 def test_score_dates_dev(tmp_path):
     lab = labels(tmp_path)
-    assert score_dates({"POD001": "2024-05-16"}, lab) == pytest.approx(0.5 / 3)  # 3 positivi, 2 senza previsione
+    assert score_dates({"POD001": "2024-05-16"}, lab) == pytest.approx(0.5 / 3)  # 3 positives, 2 without prediction
     assert score_dates({"POD001": "2024-05-01", "POD002": "2023-03-10", "POD004": "2022-07-01"}, lab) == 1.0
 
 def test_find_labels_order(tmp_path, monkeypatch):
@@ -156,7 +156,7 @@ def test_find_labels_order(tmp_path, monkeypatch):
     top.write_text("x", encoding="utf-8")
     assert score.find_labels() == top
     assert score.find_labels(str(raw)) == raw
-    with pytest.raises(SystemExit, match="Percorsi provati"):
+    with pytest.raises(SystemExit, match="Paths tried"):
         score.find_labels(str(tmp_path / "manca.csv"))
     with pytest.raises(SystemExit, match="pv_extensions_labels_dev.csv"):
         score.find_labels(None, "pv_extensions_labels_dev.csv")
