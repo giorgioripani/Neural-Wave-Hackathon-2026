@@ -66,14 +66,15 @@ def make_featurize():
     return featurize
 
 
-def detect_windows(series: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
-    """Tabella di run_detect.py: finestre di 2 anni ogni 6 mesi di ogni cliente, con etichetta."""
+def detect_windows(series: pd.DataFrame, labels: pd.DataFrame, full_series: bool = False) -> pd.DataFrame:
+    """Tabella di run_detect.py: finestre di 2 anni ogni 6 mesi di ogni cliente, con etichetta
+    (full_series=True: una riga per cliente, la serie intera)."""
     lab = labels.set_index("customer_id")
     rows = []
     for cid, g in series.groupby("customer_id", sort=True):
         if cid not in lab.index:
             continue
-        for r in run_detect.window_features(detect.daily_profile(g)):
+        for r in run_detect.window_features(detect.daily_profile(g), full_series=full_series):
             inst = lab.at[cid, "pv_installation_date"]
             pv = bool(lab.at[cid, "pv_installed"]) and (pd.isna(inst) or inst <= r["end"])
             rows.append({"customer_id": cid, "y": pv, **r})
@@ -136,6 +137,8 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--modes", default=",".join(MODES))
     ap.add_argument("--protocol", choices=list(PROTOCOLS), default="serie_intera")
+    ap.add_argument("--detect-calib", choices=["finestre", "serie_intera"], default="finestre",
+                    help="su cosa si calibrano le soglie di detect nei modi *_loo")
     ap.add_argument("--series", default="data/clean/dev.parquet")
     ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
     a = ap.parse_args(argv)
@@ -145,15 +148,17 @@ def main(argv: list[str]) -> int:
 
     series, labels = load_series(a.series), load_labels(find_labels(a.labels))
     labels = labels[labels["customer_id"].isin(series["customer_id"].unique())].reset_index(drop=True)
-    win = detect_windows(series, labels) if set(modes) - {"artefatti"} else None
+    win = (detect_windows(series, labels, a.detect_calib == "serie_intera")
+           if set(modes) - {"artefatti"} else None)
     cap = capacity_table(series, labels) if "tutto_loo" in modes else None
     featurize = make_featurize()
     (ROOT / "outputs").mkdir(exist_ok=True)
     for mode in modes:
         summary, preds = validate(series, labels, featurize, make_fit_predict(mode, win, cap),
                                   **PROTOCOLS[a.protocol])
-        preds.to_csv(ROOT / "outputs" / f"loo_pipeline_{a.protocol}_{mode}.csv", index=False)
-        print(f"{a.protocol} {mode:10s} {report(summary)}")
+        tag = f"{a.protocol}_{mode}" + ("_calib_serie" if a.detect_calib == "serie_intera" else "")
+        preds.to_csv(ROOT / "outputs" / f"loo_pipeline_{tag}.csv", index=False)
+        print(f"{tag:36s} {report(summary)}")
     return 0
 
 

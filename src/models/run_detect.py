@@ -35,9 +35,12 @@ WINDOW_DAYS = 730
 STEP_DAYS = 182
 
 
-def window_features(daily: pd.DataFrame) -> list[dict]:
-    """Daily profile of one customer -> features of each 2-year window (k = 0 is the last one)."""
+def window_features(daily: pd.DataFrame, full_series: bool = False) -> list[dict]:
+    """Daily profile of one customer -> features of each 2-year window (k = 0 is the last one).
+    full_series=True: one row only, the whole series (the test format: 2022-2025)."""
     first, last = daily["date"].min(), daily["date"].max()
+    if full_series:
+        return [{"k": 0, "end": last, **detect.features_from_daily(daily)}]
     rows, k = [], 0
     while True:
         end = last - pd.Timedelta(days=k * STEP_DAYS)
@@ -140,13 +143,15 @@ def recent_decide(xm, xr, s1, t1, s2, t2):
 def main() -> int:
     df = pd.read_parquet(SERIES, columns=["customer_id", "energy_consumption_kwh", "timestamp_epoch"])
     df["customer_id"] = df["customer_id"].astype(str)
-    lab = load_labels(find_labels(sys.argv[1] if len(sys.argv) > 1 else None)).set_index("customer_id")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    full = "--full-series" in sys.argv[1:]  # calibrate on the whole series instead of 2-year windows
+    lab = load_labels(find_labels(args[0] if args else None)).set_index("customer_id")
 
     rows = []
     for cid, g in df.groupby("customer_id", sort=True):
         if cid not in lab.index:
             continue
-        for r in window_features(detect.daily_profile(g)):
+        for r in window_features(detect.daily_profile(g), full_series=full):
             inst = lab.at[cid, "pv_installation_date"]
             pv = bool(lab.at[cid, "pv_installed"]) and (pd.isna(inst) or inst <= r["end"])
             rows.append({"customer_id": cid, "y": pv, **r})

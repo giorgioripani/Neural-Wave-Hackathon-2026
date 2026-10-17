@@ -115,6 +115,17 @@ def test_not_computable_features_stay_0499():
     assert out["POD0000"] == 0.499
 
 
+def test_window_features_full_series_one_row():
+    from src.models import run_detect
+    series, _ = make_synthetic(n_customers=1, days=900)
+    d = detect.daily_profile(series)
+    rows = run_detect.window_features(d, full_series=True)
+    assert len(rows) == 1 and rows[0]["end"] == d["date"].max()
+    full = detect.features_from_daily(d)
+    assert all((np.isnan(full[k]) and np.isnan(rows[0][k])) or full[k] == rows[0][k] for k in detect.FEATURES)
+    assert len(run_detect.window_features(d)) > 1  # default: finestre di 2 anni
+
+
 def test_features_have_all_keys():
     f = detect.features_from_daily(_daily())
     assert list(f) == detect.FEATURES
