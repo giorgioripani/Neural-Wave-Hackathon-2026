@@ -20,4 +20,8 @@ FEATURES PER CAPIRE LA PRESENZA DI UN PV - FLAVIO
 12	dip_summer + clamp tiebreaker (clamp needs ≥5% of summer days)	0.872	17	0	5	Rejected: worse than dip_summer alone
 13	Logistic regression: dip_summer + weekend_summer	0.905	19	1	3	Best overall
 14	Logistic regression: dip_summer + latest_summer	0.850	17	1	5	Rejected
-15	Logistic regression: all three	0.878	18	1	4	Rejected
+15	Logistic regression: all three	0.878	18	1	4	Rejected16	dip_spread (p90 - p10 of the daily summer dip: PV dip comes and goes with clouds)	0.927	19	0	3	Kept: new main feature, LOO threshold stable 0.836-0.856; 1-year windows 0.900 (0 FP). Thin margin: max no-PV 0.83 vs threshold 0.85
+17	dip_season (dip winter minus summer), dip_ext (Apr-Sep), dip_q25, dip_min_month, dip_recent_change	<=0.894	-	-	-	Rejected: not better than dip_summer
+18	Logistic regression: dip_spread + dip_summer / weekend_summer / dip_season / clamp (C=1 and 0.1)	0.842-0.872	-	0-1	5-6	Rejected: more FN than dip_spread alone
+19	OR rule: dip_spread high OR dip_summer very low (both thresholds fitted in LOO)	0.864	19	3	3	Rejected: second threshold unstable across folds
+20	Agent (Claude Code, 2026-10-17): proposed and tested features 16-19 on per-window aggregates only; remaining FN are large plants (166, 178, 959 kWp), one installed 75 days before data end

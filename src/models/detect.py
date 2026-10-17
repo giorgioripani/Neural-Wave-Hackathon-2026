@@ -40,6 +40,8 @@ ZERO_KWH = 0.005      # "near zero" for the clamp feature (negatives NOT counted
 MIN_ZERO_SLOTS = 5    # clamp: at least 5 near-zero midday intervals in the day
 MIN_SEG_DAYS = 30     # step: each side of the change point lasts >= 30 days
 CLAMP_MIN = 0.05      # tiebreaker: clamp counts only if >= 5% of summer days clamp
+SPREAD_Q = (0.1, 0.9) # dip_spread: quantiles of the daily summer dip (sunny vs cloudy days)
+MIN_SUMMER_DAYS = 10  # dip_spread / var_summer need at least 10 summer days
 
 FEATURES = [
     "summer_level",    # 1 median log(midday/night) in summer           (low = PV)
@@ -52,6 +54,7 @@ FEATURES = [
     "clamp_summer",    # 6 share of summer days with >=5 near-zero midday slots and normal night
     "duck",            # 7 log(evening/early_aft): summer minus winter  (high = PV)
     "weekend_summer",  # 8 summer_level on Sat-Sun only                 (low = PV)
+    "dip_spread",      # 9 p90 - p10 of daily dip in summer: PV dip comes and goes with clouds (high = PV)
 ]
 
 # Used only if artifacts/detect_params.json is missing (placeholder, not tuned)
@@ -113,7 +116,7 @@ def features_from_daily(d: pd.DataFrame) -> dict:
     f["winter_level"] = med(mid_night, winter)
     f["drop"] = f["winter_level"] - f["summer_level"]
     f["dip_summer"] = med(dip, summer)
-    f["var_summer"] = float(mid_night[summer].std()) if summer.sum() >= 10 else nan
+    f["var_summer"] = float(mid_night[summer].std()) if summer.sum() >= MIN_SUMMER_DAYS else nan
     if summer.any():
         last_year = d.loc[summer, "date"].dt.year.max()
         f["latest_summer"] = med(mid_night, summer & (d["date"].dt.year == last_year))
@@ -123,6 +126,9 @@ def features_from_daily(d: pd.DataFrame) -> dict:
     f["clamp_summer"] = float(((d["mid_zero"] >= MIN_ZERO_SLOTS) & night_ok)[summer].mean()) if summer.any() else nan
     f["duck"] = med(duck, summer) - med(duck, winter)
     f["weekend_summer"] = med(mid_night, summer & weekend)
+    dip_s = dip[summer].dropna()
+    f["dip_spread"] = (float(dip_s.quantile(SPREAD_Q[1]) - dip_s.quantile(SPREAD_Q[0]))
+                       if len(dip_s) >= MIN_SUMMER_DAYS else nan)
     return f
 
 

@@ -1,6 +1,6 @@
 {
-  "feature": "dip_summer",
-  "sign": -1,
-  "threshold": 0.05177132163408304,
-  "scale": 0.346108602303662
+  "feature": "dip_spread",
+  "sign": 1,
+  "threshold": 0.8525391886215261,
+  "scale": 0.747310568807556
 }

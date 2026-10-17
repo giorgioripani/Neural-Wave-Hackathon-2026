@@ -71,7 +71,7 @@ def fit_rule(x: np.ndarray, y: np.ndarray) -> tuple[int, float, float]:
     return best
 
 
-MAIN = "dip_summer"      # main feature (best LOO F1 without near-zero values)
+MAIN = "dip_spread"      # main feature (best LOO F1, 0 FP, no reliance on near-zero values)
 TIE = "clamp_summer"     # tiebreaker, used only in the grey zone of MAIN
 BAND_FRACTIONS = [0.0, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0]  # grey-zone half-width, in std of MAIN
 
