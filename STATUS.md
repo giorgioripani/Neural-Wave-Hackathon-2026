@@ -3,7 +3,7 @@
 Ognuno modifica solo la propria riga e aggiorna quando chiude un pezzo (non a ogni commit).
 Gli agenti leggono questo file per sapere cosa fanno gli altri: tenerlo breve e vero.
 
-Ultimo aggiornamento: 17/10 da Andrea
+Ultimo aggiornamento: 17/10 da Andrea (consegna finale)
 Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). Poi presentazione da 5 minuti.
 
 ## Chi fa cosa
@@ -25,6 +25,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 - [ ] Dopo la consegna: presentazione da 5 minuti
 
 ## Fatto (già in main)
+- 17/10 Andrea (d'accordo con Giorgio): merge PR #7 (README completo, tolto DatabaseReadme.md); verificato su clone pulito da GitHub: AMBIENTE OK, 205 test, previsioni identiche a f82db85 (fake_test 78,66 in-sample), LOO 78,49. Tag `v2-consegna` spostato sull'ultima main.
 - 17/10 Giorgio: merge finale in main (f82db85, tag `v2-consegna`): ImprovementDetectAlgorythm, PR #6 (load_test), fix/bug-fixes, PR #5 (score_ext), Leonardo/date-agg; detect con crash -> TRUE; test 2022-2025 (fake_test serie intera, fake_test_2y); 205 test; previsioni sul test a 2 anni identiche a prima dei merge.
 - 17/10 Leonardo: estensioni in main (c18a288) e collegate in `inference.py` (09e9ce2): al massimo 3 righe in `pv_extensions_predictions.csv`, riserva `ext` nel riepilogo; `predictions.csv` invariato (78,38), tempo su fake_test 14 s.
 - 17/10 Leonardo: Task 2 v2 (stagionalità + gradino, regola "nessun gradino") in main; su 22 clienti, finestre di 2 anni dentro i dati: D 0,597, mediana errore 2,5 giorni, 7 clienti oltre 30 giorni.
