@@ -47,6 +47,7 @@ PRED_HEADER = ["customer_id", "pv_installed", "pv_installation_date", "pv_capaci
 EXT_HEADER = ["customer_id", "extension_date", "pv_capacity_after_extension_kwp"]
 SEP = ";"
 PV_THRESHOLD = 0.5
+EXT_TOP_K = 3  # righe di estensione scritte in tutto (le piu` sicure, extensions.top_k)
 FALLBACK_MEDIAN_KWP = 169.5  # mediana dei kWp di sviluppo, se manca l'artefatto
 
 
@@ -138,6 +139,19 @@ def call_capacity(mod, series: pd.DataFrame, date: str) -> float:
     return kwp
 
 
+def call_extensions(mod, series: pd.DataFrame, date: str, kwp: float) -> list[dict]:
+    """extensions.predict_extensions_refined(serie del cliente, data, kWp) ->
+    [{date 'AAAA-MM-GG', kwp_after (kWp totali), strength}], controllati."""
+    out = []
+    for e in mod.predict_extensions_refined(series, date, kwp):
+        kwp_after = float(e["kwp_after"])
+        if not (kwp_after > 0 and kwp_after < float("inf")):
+            raise ValueError(f"kWp dopo l'estensione non valido: {kwp_after}")
+        out.append({"date": pd.Timestamp(e["date"]).strftime("%Y-%m-%d"),
+                    "kwp_after": kwp_after, "strength": float(e["strength"])})
+    return out
+
+
 def first_day(series: pd.DataFrame) -> str:
     return pd.to_datetime(series["ts_epoch"].min(), unit="s", utc=True).strftime("%Y-%m-%d")
 
@@ -200,6 +214,41 @@ def predict_all(df: pd.DataFrame, used: dict | None = None) -> list[dict]:
     return rows
 
 
+def predict_extensions_all(df: pd.DataFrame, rows: list[dict], used: dict | None = None,
+                           k: int = EXT_TOP_K) -> list[dict]:
+    """Estensioni (bonus) dei clienti con pv_installed=TRUE, partendo da data e kWp
+    gia` decisi in `rows` (che non vengono modificate). -> righe di EXT_HEADER, le k
+    piu` sicure secondo extensions.top_k. used["ext"] = clienti senza estensioni
+    per errore (tutti i clienti TRUE se il modulo manca)."""
+    used = {} if used is None else used
+    pv_rows = [r for r in rows if r["pv_installed"]]
+    used["ext"] = 0
+    mod = load_module("extensions")
+    if mod is None:
+        used["ext"] = len(pv_rows)
+        print("[riserva] extensions non disponibile: solo intestazione")
+        return []
+    by_cid = dict(tuple(df.groupby("customer_id", sort=False)))
+    found = []
+    for r in pv_rows:
+        cid = r["customer_id"]
+        try:
+            exts = call_extensions(mod, by_cid[cid], r["pv_installation_date"], float(r["pv_capacity_kwp"]))
+        except Exception as e:
+            warn("extensions", cid, e)
+            used["ext"] += 1
+            continue
+        found += [{"customer_id": cid, **e} for e in exts]
+    try:
+        best = mod.top_k(found, k=k)
+    except Exception as e:
+        warn("extensions.top_k", "*", e)
+        print("[riserva] extensions.top_k fallito: solo intestazione")
+        return []
+    return [{"customer_id": e["customer_id"], "extension_date": e["date"],
+             "pv_capacity_after_extension_kwp": round(float(e["kwp_after"]), 2)} for e in best]
+
+
 def write_outputs(rows: list[dict], ext_rows: list[dict], out_dir: Path = Path(".")) -> None:
     with open(out_dir / "predictions.csv", "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=SEP, lineterminator="\n")
@@ -227,10 +276,13 @@ def main(argv: list[str]) -> int:
         print(f"ATTENZIONE: {n_null} righe senza customer_id (nessun cliente a cui attribuirle)")
     used = {}
     rows = predict_all(df, used)
-    write_outputs(rows, ext_rows=[])  # estensioni: per ora solo intestazione
+    ext_rows = predict_extensions_all(df, rows, used)
+    write_outputs(rows, ext_rows)
     n_pv = sum(r["pv_installed"] for r in rows)
     print(f"predictions.csv: {len(rows)} clienti ({n_pv} con fotovoltaico)")
-    print(f"Riserve usate: detect {used['detect']}, date {used['date']}, capacity {used['capacity']}")
+    print(f"pv_extensions_predictions.csv: {len(ext_rows)} estensioni")
+    print(f"Riserve usate: detect {used['detect']}, date {used['date']}, "
+          f"capacity {used['capacity']}, ext {used['ext']}")
     if any(used.values()):
         print("ATTENZIONE: alcune previsioni usano le riserve, controllare i messaggi sopra")
     return 0

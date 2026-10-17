@@ -154,3 +154,79 @@ def test_check_env_helpers(tmp_path, monkeypatch):
     check_env.check_artifacts(problems)
     assert any("capacity.json non e` un JSON valido" in p for p in problems)
     assert any("detect_params.json non esiste" in p for p in problems)
+
+
+# --- Estensioni (bonus) in inference.py ----------------------------------------
+
+class _AllPV:
+    @staticmethod
+    def predict(df):
+        return {c: 0.9 for c in df["customer_id"].unique()}
+
+
+def _fake_ext(per_customer=1, fail_for=()):
+    """Modulo finto: per ogni cliente `per_customer` estensioni con strength diverse."""
+    import types
+    from src.models import extensions as real
+
+    def predict_extensions_refined(series, date0, kwp0):
+        cid = series["customer_id"].iloc[0]
+        if cid in fail_for:
+            raise RuntimeError("rotto")
+        n = int(cid[-1]) if cid[-1].isdigit() else 0
+        return [{"date": str((pd.Timestamp(date0) + pd.Timedelta(days=100 * (j + 1))).date()),
+                 "kwp_after": kwp0 * 1.234567, "strength": 0.1 * n + 0.01 * j}
+                for j in range(per_customer)]
+
+    return types.SimpleNamespace(predict_extensions_refined=predict_extensions_refined, top_k=real.top_k)
+
+
+def _run_main(tmp_path, monkeypatch, ext_mod, capsys=None):
+    """inference.main su dati sintetici con detect finto (tutti PV) -> (pred, ext, stdout)."""
+    import inference
+    series, _ = make_synthetic(n_customers=4, days=250)
+    src = tmp_path / "test.csv"
+    series.to_csv(src, sep=";", index=False)
+    real = inference.load_module
+    fakes = {"detect": _AllPV, "extensions": ext_mod}
+    monkeypatch.setattr(inference, "load_module", lambda name: fakes[name] if name in fakes else real(name))
+    out = tmp_path / ext_mod.__class__.__name__ if ext_mod is not None else tmp_path / "none"
+    out.mkdir(exist_ok=True)
+    monkeypatch.chdir(out)
+    assert inference.main([str(src)]) == 0
+    pred = (out / "predictions.csv").read_bytes()
+    ext = (out / "pv_extensions_predictions.csv").read_text(encoding="utf-8").splitlines()
+    return pred, ext, (capsys.readouterr().out if capsys else "")
+
+
+def test_extensions_missing_header_only(tmp_path, monkeypatch, capsys):
+    pred_none, ext, out = _run_main(tmp_path, monkeypatch, None, capsys)
+    assert ext == [EXT_HEADER]
+    assert "extensions non disponibile" in out and "ext 4" in out
+    pred_ext, ext2, _ = _run_main(tmp_path, monkeypatch, _fake_ext(), capsys)
+    assert len(ext2) > 1
+    assert pred_none == pred_ext  # le estensioni non cambiano predictions.csv
+
+
+def test_extensions_raising_for_one_customer(tmp_path, monkeypatch, capsys):
+    series, _ = make_synthetic(n_customers=4, days=250)
+    ids = sorted(series["customer_id"].unique())
+    _, ext, out = _run_main(tmp_path, monkeypatch, _fake_ext(fail_for={ids[-1]}), capsys)
+    got = {line.split(";")[0] for line in ext[1:]}
+    assert ids[-1] not in got and got == set(ids[:3])
+    assert "ext 1" in out and "pv_extensions_predictions.csv: 3 estensioni" in out
+
+
+def test_extensions_top_k_at_most_3(tmp_path, monkeypatch):
+    _, ext, _ = _run_main(tmp_path, monkeypatch, _fake_ext(per_customer=2))  # 8 candidate
+    assert len(ext) == 1 + 3
+
+
+def test_extensions_output_format(tmp_path, monkeypatch):
+    import re
+    _, ext, _ = _run_main(tmp_path, monkeypatch, _fake_ext())
+    assert ext[0] == EXT_HEADER
+    for line in ext[1:]:
+        cid, date, kwp = line.split(";")
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", date)
+        assert re.fullmatch(r"\d+(\.\d{1,2})?", kwp) and float(kwp) > 0

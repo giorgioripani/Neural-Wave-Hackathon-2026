@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 # nome pip -> nome import, quando sono diversi
 IMPORT_NAMES = {"scikit-learn": "sklearn"}
 ARTIFACTS = ["capacity.json", "detect_params.json"]
-MODULES = ["detect", "date", "capacity"]
+MODULES = ["detect", "date", "capacity", "extensions"]
 
 
 def read_requirements(path: Path) -> dict[str, str]:
