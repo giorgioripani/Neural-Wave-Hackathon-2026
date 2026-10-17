@@ -52,6 +52,20 @@ def test_apply_recent_only_adds_pv():
     assert out[0] == 0.9 and out[1] > 0.5 and out[2] < 0.5
 
 
+def test_tree_loo_separable_windows():
+    from src.models import tree_detect
+    rng = np.random.default_rng(42)
+    rows = []
+    for i in range(20):
+        y = i % 2 == 0
+        for k in range(3):
+            rows.append({"customer_id": f"POD{i}", "k": k, "y": y, "dip_spread": (2.0 if y else 0.2) + 0.1 * rng.random()})
+    win = pd.DataFrame(rows)
+    y, p, roots = tree_detect.loo(win, tree_detect.MODELS["tree d1 leaf5"], ["dip_spread"])
+    assert len(y) == 20 and tree_detect.f1(y, p) == 1.0
+    assert set(roots) == {"dip_spread"}
+
+
 def test_features_have_all_keys():
     f = detect.features_from_daily(_daily())
     assert list(f) == detect.FEATURES
