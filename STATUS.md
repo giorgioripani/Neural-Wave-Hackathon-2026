@@ -11,7 +11,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | --- | --- | --- | --- | --- |
 | Giorgio | Integrazione, `inference.py`, repo dell'organizzazione, Swisstransfer | `inference.py`, `demo/` | [branch] | [stato] |
 | Andrea | Dati e punteggio ufficiale; report di 3 pagine | `src/loading/`, `src/eval/` | `andrea/eval` (in main) | Fatto: prepare_data, load_series, daily_features, score.py, validate.py. Prossimo: punteggio della pipeline intera, grafici e tabelle per il report |
-| Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | `flavio/detect2` | Feature scelta: `dip_spread`, F1 LOO 0,927 (0 FP, 3 FN) |
+| Flavio | Task 1: c'è il fotovoltaico?; README e presentazione da 5 minuti | `src/models/detect.py` | `flavio/detect2` (in main) | In main: `dip_spread` + secondo passo `rec_drop` (installazioni recenti), F1 LOO 0,952 (0 FP, 2 FN); regola in `artifacts/detect_params.json` |
 | Leonardo | Task 2: data (poi estensioni); `docs/LOG.md` | `src/models/date.py` | `Leonardo/data1` | Task 2 v2 + fix fillna in main. Prossimo: test sintetico realistico |
 | Francesco | Task 3: kWp; grafici e video da 2 minuti | `src/models/capacity.py`, `src/viz/` | `francesco/capacity` | branch pronto per la PR verso main; in uso `geo_b` (media geometrica B lineare x mediana): P 0,437 con data vera e con data stimata da date.py, mediana 0,415 (validate.py, seed 42; con seed 7 0,429). `geo_b_loglog`, taglia e altre combinazioni scartate |
 
@@ -28,6 +28,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 - 17/10 Leonardo: Task 2 v2 (stagionalità + gradino, regola "nessun gradino") in main; su 22 clienti, finestre di 2 anni dentro i dati: D 0,597, mediana errore 2,5 giorni, 7 clienti oltre 30 giorni.
 - 17/10 03:13 Andrea: dati puliti (dev 40 clienti, senza etichette 1147 clienti), `load_series`, `daily_features`, `score.py` (formula ufficiale, unico file di punteggio), `validate.py` (leave-one-out, finestre di 2 anni). Baseline 54,58.
 - 17/10 Giorgio: `inference.py` provvisorio con riserve; sul test finto scrive 40 righe nel formato giusto.
+- 17/10 Flavio: `detect.py` (`dip_spread` + `rec_drop`, F1 LOO 0,952) in main (ebe5364); pipeline intera sul test finto: 20 clienti con fotovoltaico, punteggio 78,38 (in-sample).
 
 ## In corso
 - Leonardo: Task 2, test sintetico realistico.
@@ -47,6 +48,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | Data e ora | Versione (commit) | F1 | D | P | Punteggio |
 | --- | --- | --- | --- | --- | --- |
 | 17/10 | 066bc37, baseline (sempre TRUE, data a metà finestra, kWp mediano) | 0,710 | 0,045 | 0,415 | 54,58 ± 0,41 |
+| 17/10 | ebe5364, pipeline intera (detect + date + capacity) su fake_test, IN-SAMPLE (ottimistico, non LOO) | 0,952 | 0,372 | 0,448 | 78,38 |
 
 ## Quota Claude (controllare con /status circa ogni ora)
 | Persona | Quota usata | Crediti extra |
