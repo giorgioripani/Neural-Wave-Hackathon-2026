@@ -53,7 +53,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 | 17/10 | ebe5364, pipeline intera (detect + date + capacity) su fake_test, IN-SAMPLE (ottimistico, non LOO) | 0,952 | 0,372 | 0,448 | 78,38 |
 | 17/10 | 45d6f80 (main 9858eb4), pipeline intera LOO con artefatti attuali (detect e capacity calcolati anche sul cliente lasciato fuori: OTTIMISTA), `python -m src.eval.loo_pipeline` | 0,922 | 0,608 | 0,452 | 79,19 ± 2,92 |
 | 17/10 | 45d6f80, pipeline intera LOO, soglie detect ricalcolate senza il cliente lasciato fuori, capacity da artefatto | 0,909 | 0,608 | 0,452 | 78,10 ± 2,42 |
-| 17/10 | 45d6f80, pipeline intera LOO, detect E capacity (geo_b) ricalcolati senza il cliente lasciato fuori: NUMERO PER IL REPORT | 0,909 | 0,608 | 0,439 | 77,93 ± 2,42 |
+| 17/10 | 45d6f80, pipeline intera LOO, detect E capacity (geo_b) ricalcolati senza il cliente lasciato fuori, finestre di 2 anni (superato: ora vale la serie intera, riga f82db85) | 0,909 | 0,608 | 0,439 | 77,93 ± 2,42 |
 | 17/10 | 09e9ce2, estensioni su fake_test, IN-SAMPLE: 3 previste, 1 vera (TP 0, FP 3, FN 1), F1_ext 0, bonus 0 (con 10 x F1_ext, formula non ufficiale) | - | - | - | 78,38 + 0 |
 | 17/10 | f82db85 (`v2-consegna`), pipeline intera LOO tutto_loo sulla SERIE INTERA (protocollo serie_intera, 1 giro deterministico): NUMERO PER IL REPORT | 0,905 | 0,665 | 0,452 | 78,49 |
 | 17/10 | f82db85, in-sample su fake_test serie intera / fake_test_2y (ottimistici) | 0,905 / 0,952 | 0,665 / 0,372 | 0,465 / 0,448 | 78,66 / 78,38 |
