@@ -143,3 +143,20 @@ def test_score_dates_dev(tmp_path):
     lab = labels(tmp_path)
     assert score_dates({"POD001": "2024-05-16"}, lab) == pytest.approx(0.5 / 3)  # 3 positivi, 2 senza previsione
     assert score_dates({"POD001": "2024-05-01", "POD002": "2023-03-10", "POD004": "2022-07-01"}, lab) == 1.0
+
+def test_find_labels_order(tmp_path, monkeypatch):
+    import pytest
+    from src.eval import score
+    monkeypatch.setattr(score, "ROOT", tmp_path)
+    (tmp_path / "data" / "raw").mkdir(parents=True)
+    raw = tmp_path / "data" / "raw" / "pv_labels_dev.csv"
+    raw.write_text("x", encoding="utf-8")
+    assert score.find_labels() == raw
+    top = tmp_path / "data" / "pv_labels_dev.csv"
+    top.write_text("x", encoding="utf-8")
+    assert score.find_labels() == top
+    assert score.find_labels(str(raw)) == raw
+    with pytest.raises(SystemExit, match="Percorsi provati"):
+        score.find_labels(str(tmp_path / "manca.csv"))
+    with pytest.raises(SystemExit, match="pv_extensions_labels_dev.csv"):
+        score.find_labels(None, "pv_extensions_labels_dev.csv")

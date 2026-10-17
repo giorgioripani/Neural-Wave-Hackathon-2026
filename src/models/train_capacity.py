@@ -21,7 +21,7 @@ Metodi (configurazioni fissate prima di guardare i risultati):
 
 Uso (solo sviluppo, legge data/):
     python -m src.models.train_capacity [--method auto|<nome>[,<nome>...]] [--date vera|stimata]
-            [--no-save] [--series data/clean/dev.parquet] [--labels data/raw/pv_labels_dev.csv]
+            [--no-save] [--series data/clean/dev.parquet] [--labels data/pv_labels_dev.csv]
 auto = prova i metodi di AUTO_RUN. Vince il P medio piu` alto, ma solo se batte la
 mediana di almeno MIN_GAIN; altrimenti resta la mediana. Stampa <= 10 righe,
 previsioni per cliente in outputs/capacity_validate_<metodo>.csv.
@@ -35,7 +35,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.eval.score import load_labels
+from src.eval.score import find_labels, load_labels
 from src.eval.validate import POS_RANGE, SEED, crop, validate, window
 from src.loading.load import load_series
 from src.models import capacity_a, capacity_b, capacity_blend, capacity_size, date as date_mod
@@ -148,10 +148,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--date", default="vera", choices=["vera", "stimata"])
     ap.add_argument("--no-save", action="store_true", help="solo misura, non scrive l'artefatto")
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default="data/raw/pv_labels_dev.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
     a = ap.parse_args(argv)
 
-    series, labels = load_series(a.series), load_labels(a.labels)
+    series, labels = load_series(a.series), load_labels(find_labels(a.labels))
     labels = labels[labels["customer_id"].isin(series["customer_id"].unique())].reset_index(drop=True)
     true_dates = dict(zip(labels["customer_id"], labels["pv_installation_date"]))
     asked = AUTO_RUN if a.method == "auto" else a.method.split(",")

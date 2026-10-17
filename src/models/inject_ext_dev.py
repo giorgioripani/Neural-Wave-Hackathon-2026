@@ -47,7 +47,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.eval.score import load_labels  # noqa: E402
+from src.eval.score import find_labels, load_labels  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models import capacity  # noqa: E402
 from src.models.date import MIDDAY_UTC_HOURS, estimate, estimate_v2, estimate_v4  # noqa: E402
@@ -207,8 +207,8 @@ def summarize(inj: pd.DataFrame, orig: pd.DataFrame, n_customers: int) -> pd.Dat
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default="data/pv_labels_dev.csv")
-    ap.add_argument("--ext-labels", default="data/pv_extensions_labels_dev.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
+    ap.add_argument("--ext-labels", default=None, help="default: data/pv_extensions_labels_dev.csv, poi data/raw/")
     ap.add_argument("--out-dir", default="outputs/inject_ext")
     ap.add_argument("--reestimate-date0", action="store_true",
                     help="ristima date0 e kwp0 sulla serie iniettata (default: quelli della finestra originale)")
@@ -221,8 +221,8 @@ def main() -> int:
     np.random.seed(SEED)
     rng = np.random.default_rng(SEED)
 
-    lab = load_labels(a.labels)
-    with_ext = set(load_ext_labels(a.ext_labels)["customer_id"])
+    lab = load_labels(find_labels(a.labels))
+    with_ext = set(load_ext_labels(find_labels(a.ext_labels, "pv_extensions_labels_dev.csv"))["customer_id"])
     pos = lab[lab["pv_installed"] & lab["pv_installation_date"].notna() & ~lab["customer_id"].isin(with_ext)]
     series = load_series(a.series, customers=pos["customer_id"].tolist())
     groups = dict(tuple(series.groupby("customer_id", sort=False)))

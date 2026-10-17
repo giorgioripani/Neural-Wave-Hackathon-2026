@@ -12,6 +12,7 @@ Uso:
 """
 import csv
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -42,6 +43,20 @@ def capacity_score(pred, true) -> float:
         return 0.0
     rel = abs(float(pred) - float(true)) / float(true)
     return max(0.0, 1.0 - rel / MAX_REL_ERR)
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def find_labels(arg=None, name: str = "pv_labels_dev.csv") -> Path:
+    """Percorso del file di etichette: `arg` se dato (solo quello), altrimenti il
+    primo che esiste fra data/<name> e data/raw/<name>. Se nessuno esiste, esce
+    con un messaggio che elenca i percorsi provati."""
+    tried = [Path(arg)] if arg else [ROOT / "data" / name, ROOT / "data" / "raw" / name]
+    for p in tried:
+        if p.is_file():
+            return p
+    sys.exit(f"Etichette {name} non trovate. Percorsi provati: " + ", ".join(str(p) for p in tried))
 
 
 def load_labels(path) -> pd.DataFrame:

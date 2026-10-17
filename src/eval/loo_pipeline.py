@@ -26,7 +26,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from src.eval.score import load_labels  # noqa: E402
+from src.eval.score import find_labels, load_labels  # noqa: E402
 from src.eval.validate import POS_RANGE, SEED, crop, report, validate, window  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 
@@ -132,13 +132,13 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--modes", default=",".join(MODES))
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default="data/pv_labels_dev.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
     a = ap.parse_args(argv)
     modes = a.modes.split(",")
     if set(modes) - set(MODES):
         ap.error(f"modi: {MODES}")
 
-    series, labels = load_series(a.series), load_labels(a.labels)
+    series, labels = load_series(a.series), load_labels(find_labels(a.labels))
     labels = labels[labels["customer_id"].isin(series["customer_id"].unique())].reset_index(drop=True)
     win = detect_windows(series, labels) if set(modes) - {"artefatti"} else None
     cap = capacity_table(series, labels) if "tutto_loo" in modes else None

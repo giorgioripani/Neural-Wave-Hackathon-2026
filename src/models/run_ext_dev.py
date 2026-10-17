@@ -39,7 +39,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.eval.score import load_labels  # noqa: E402
+from src.eval.score import find_labels, load_labels  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models import capacity  # noqa: E402
 from src.models.date import estimate  # noqa: E402
@@ -125,8 +125,8 @@ def load_ext_labels(path) -> pd.DataFrame:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default="data/pv_labels_dev.csv")
-    ap.add_argument("--ext-labels", default="data/pv_extensions_labels_dev.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
+    ap.add_argument("--ext-labels", default=None, help="default: data/pv_extensions_labels_dev.csv, poi data/raw/")
     ap.add_argument("--out", default="outputs/ext_dev.csv")
     ap.add_argument("--window", choices=["full", "last730"], default="last730")
     ap.add_argument("--min-tail", type=int, default=0, help="min_tail_days di estimate_extensions")
@@ -135,9 +135,9 @@ def main() -> int:
     a = ap.parse_args()
     np.random.seed(SEED)
 
-    lab = load_labels(a.labels)
+    lab = load_labels(find_labels(a.labels))
     pos = lab[lab["pv_installed"]]["customer_id"].tolist()
-    ext_lab = load_ext_labels(a.ext_labels)
+    ext_lab = load_ext_labels(find_labels(a.ext_labels, "pv_extensions_labels_dev.csv"))
     series = load_series(a.series, customers=pos)
     groups = dict(tuple(series.groupby("customer_id", sort=False)))
 

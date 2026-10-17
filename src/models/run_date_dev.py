@@ -32,7 +32,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.eval.score import date_score, load_labels  # noqa: E402
+from src.eval.score import date_score, find_labels, load_labels  # noqa: E402
 from src.eval.validate import window  # noqa: E402
 from src.loading.load import load_series  # noqa: E402
 from src.models.extensions import refine_date0  # noqa: E402
@@ -80,7 +80,7 @@ def evaluate_customer(daily: pd.DataFrame, true_date, positions=POSITIONS, metho
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--series", default="data/clean/dev.parquet")
-    ap.add_argument("--labels", default="data/pv_labels_dev.csv")
+    ap.add_argument("--labels", default=None, help="default: data/pv_labels_dev.csv, poi data/raw/pv_labels_dev.csv")
     ap.add_argument("--out", default=None, help="default outputs/date_dev_<metodo>.csv")
     ap.add_argument("--method", choices=sorted(METHODS), default=DEFAULT_METHOD)
     ap.add_argument("--refine", action="store_true", help="applica refine_date0 dopo il metodo")
@@ -89,7 +89,7 @@ def main() -> int:
     out = a.out or f"outputs/date_dev_{a.method}{'_refine' if a.refine else ''}.csv"
     others = COMPARE[a.method] + (["raw"] if a.refine else [])
 
-    lab = load_labels(a.labels)
+    lab = load_labels(find_labels(a.labels))
     pos_lab = lab[lab["pv_installed"] & lab["pv_installation_date"].notna()]
     series = load_series(a.series, customers=pos_lab["customer_id"].tolist())
     groups = dict(tuple(series.groupby("customer_id", sort=False)))
