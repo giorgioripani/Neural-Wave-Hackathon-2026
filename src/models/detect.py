@@ -13,6 +13,7 @@ fixed UTC band) -> features_from_daily() (one dict per customer/window)
 Only consumption and calendar: fixed UTC hours, no sun/weather/location.
 """
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -67,11 +68,15 @@ DEFAULT_PARAMS = {"feature": "drop", "sign": 1, "threshold": 0.5, "scale": 0.2}
 def daily_profile(series: pd.DataFrame) -> pd.DataFrame:
     """15-min series of ONE customer -> one row per UTC day:
     date, mean kWh per interval in each band, mid_zero (count of near-zero midday slots).
-    Accepts dataset columns or load_series columns. Never assumes 96 rows per day."""
+    Accepts dataset columns or load_series columns. Never assumes 96 rows per day.
+    Rows with a missing or non-numeric epoch are dropped; a non-numeric kWh becomes NaN."""
     kwh_col = "kwh" if "kwh" in series.columns else "energy_consumption_kwh"
     ts_col = "ts_epoch" if "ts_epoch" in series.columns else "timestamp_epoch"
-    ts = pd.to_datetime(series[ts_col].astype("int64"), unit="s", utc=True)
-    raw = series[kwh_col].astype(float)
+    epoch = pd.to_numeric(series[ts_col], errors="coerce")
+    valid = epoch.notna() & np.isfinite(epoch)
+    series, epoch = series[valid], epoch[valid]
+    ts = pd.to_datetime(epoch.astype("int64"), unit="s", utc=True)
+    raw = pd.to_numeric(series[kwh_col], errors="coerce").astype(float)
     kwh = raw.clip(lower=0)
     hour = ts.dt.hour
     df = pd.DataFrame({"date": ts.dt.normalize().dt.tz_localize(None)})
@@ -141,9 +146,16 @@ def features_from_daily(d: pd.DataFrame) -> dict:
 
 
 def customer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """15-min series of ALL customers -> one row per customer (index = customer_id as str)."""
+    """15-min series of ALL customers -> one row per customer (index = customer_id as str).
+    A customer whose features fail gets all-NaN features (-> no PV); the others are unaffected."""
     ids = df["customer_id"].astype(str)
-    rows = {cid: features_from_daily(daily_profile(g)) for cid, g in df.groupby(ids, sort=True)}
+    rows = {}
+    for cid, g in df.groupby(ids, sort=True):
+        try:
+            rows[cid] = features_from_daily(daily_profile(g))
+        except Exception as e:
+            print(f"[detect] features failed for one customer ({cid}): {type(e).__name__}: {e}", file=sys.stderr)
+            rows[cid] = dict.fromkeys(FEATURES, float("nan"))
     return pd.DataFrame.from_dict(rows, orient="index", columns=FEATURES)
 
 
@@ -172,8 +184,9 @@ def apply_tiebreak(proba: pd.Series, x: pd.Series, threshold: float, band: float
 
 
 def apply_recent(proba: pd.Series, x: pd.Series, sign: int, threshold: float, scale: float) -> pd.Series:
-    """Second pass for recent installations: can only turn 'no PV' into 'PV' (OR rule)."""
-    return np.maximum(proba, proba_from_feature(x, sign, threshold, scale))
+    """Second pass for recent installations: can only turn 'no PV' into 'PV' (OR rule).
+    Where x is missing the main rule's probability is kept unchanged."""
+    return proba.where(x.isna(), np.maximum(proba, proba_from_feature(x, sign, threshold, scale)))
 
 
 def predict(df: pd.DataFrame) -> dict[str, float]:

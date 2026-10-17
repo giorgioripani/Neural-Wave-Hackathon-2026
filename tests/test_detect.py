@@ -66,6 +66,47 @@ def test_tree_loo_separable_windows():
     assert set(roots) == {"dip_spread"}
 
 
+def test_apply_recent_keeps_proba_when_missing():
+    proba = pd.Series([0.3, 0.3])
+    out = detect.apply_recent(proba, pd.Series([np.nan, 0.0]), sign=1, threshold=0.12, scale=0.05)
+    assert out[0] == 0.3 and out[1] == 0.3
+
+
+def test_predict_survives_bad_epoch_and_text_kwh():
+    series, lab = make_synthetic(n_customers=2, days=400)
+    clean = detect.predict(series)
+    dirty = series.copy().astype({"timestamp_epoch": object, "energy_consumption_kwh": object})
+    first = dirty.index[dirty["customer_id"] == "POD0000"][:3]
+    dirty.loc[first[0], "timestamp_epoch"] = np.nan
+    dirty.loc[first[1], "timestamp_epoch"] = "abc"
+    dirty.loc[first[2], "energy_consumption_kwh"] = "n/a"
+    out = detect.predict(dirty)
+    assert sorted(out) == sorted(lab["customer_id"])
+    assert abs(out["POD0001"] - clean["POD0001"]) < 1e-12
+
+
+def test_one_failing_customer_does_not_affect_others():
+    series, lab = make_synthetic(n_customers=3, days=400)
+    clean = detect.predict(series)
+    orig = detect.features_from_daily
+    calls = {"n": 0}
+
+    def flaky(d):
+        calls["n"] += 1
+        if calls["n"] == 1:  # first customer (sorted): POD0000
+            raise RuntimeError("boom")
+        return orig(d)
+
+    detect.features_from_daily = flaky
+    try:
+        out = detect.predict(series)
+    finally:
+        detect.features_from_daily = orig
+    assert sorted(out) == sorted(lab["customer_id"])
+    assert out["POD0000"] == 0.499
+    assert out["POD0001"] == clean["POD0001"] and out["POD0002"] == clean["POD0002"]
+
+
 def test_features_have_all_keys():
     f = detect.features_from_daily(_daily())
     assert list(f) == detect.FEATURES
