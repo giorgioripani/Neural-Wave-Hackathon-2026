@@ -1,68 +1,67 @@
-# Bug corretti nel branch `fix/bug-fixes`
+# Bugs fixed in the test reader and adapters
 
-Base: `main` 09d3ab3. Commit: `baaacc0` (inference.py e test) e `8bd2526` (loo_pipeline.py).
-Verifica generale: 167 test passano. Sul test finto (40 clienti, ultimi 2 anni) `predictions.csv` e
-`pv_extensions_predictions.csv` sono identici byte per byte a quelli di `main`. Le correzioni cambiano
-solo i casi anomali, non le previsioni sui dati puliti.
+Base: `main` 09d3ab3. Commits: `baaacc0` (inference.py and tests) and `8bd2526` (loo_pipeline.py).
+General check: 167 tests pass. On the fake test (40 customers, last 2 years) `predictions.csv` and
+`pv_extensions_predictions.csv` are byte-identical to those of `main`. The fixes change only the
+anomalous cases, not the predictions on clean data. The test reader was later moved to
+`src.loading.load.load_test`, which keeps all of these behaviours.
 
-## 1. Un `timestamp_epoch` vuoto blocca tutta l'inferenza
+## 1. An empty `timestamp_epoch` stops the whole inference
 - **File:** `inference.py`, `read_test`.
-- **Sintomo:** se anche una sola riga del CSV di test ha `timestamp_epoch` vuoto o illeggibile, il programma
-  si ferma con `IntCastingNaNError` e non scrive né `predictions.csv` né `pv_extensions_predictions.csv`.
-  È il caso peggiore possibile: zero punti.
-- **Causa:** `df["timestamp_epoch"].astype("int64")` non accetta NaN.
-- **Correzione:** l'epoch viene convertito con `pd.to_numeric(..., errors="coerce")`. Le righe senza epoch
-  valido vengono tolte con un avviso, perché non si sa a che istante appartengono. L'elenco completo dei
-  clienti viene salvato prima in `df.attrs["customer_ids"]`. Se un cliente resta senza nessuna riga,
-  `predict_all` scrive comunque la sua riga, con `FALSE`. Così resta vera la regola "una riga per ogni
-  customer_id del test".
+- **Symptom:** if even a single row of the test CSV has an empty or unreadable `timestamp_epoch`, the program
+  stops with `IntCastingNaNError` and writes neither `predictions.csv` nor `pv_extensions_predictions.csv`.
+  The worst possible case: zero points.
+- **Cause:** `df["timestamp_epoch"].astype("int64")` does not accept NaN.
+- **Fix:** the epoch is converted with `pd.to_numeric(..., errors="coerce")`. Rows without a valid epoch are
+  dropped with a warning, because their time is unknown. The full list of customers is saved first, and a
+  customer left without any row still gets its output row. This keeps the rule "one row for every
+  customer_id of the test".
 - **Test:** `test_epoch_missing_rows_dropped_customer_kept`.
 
-## 2. Intestazione con spazi e id numerici: crash e zeri iniziali persi
+## 2. Header with spaces and numeric ids: crash and lost leading zeros
 - **File:** `inference.py`, `read_test`.
-- **Sintomo:** con un'intestazione come `" customer_id ";...` e id fatti solo di cifre (`000123`), il
-  programma va in errore (`AttributeError: Can only use .str accessor with string values`). Senza il crash,
-  `000123` diventerebbe `123`, e il PDF chiede di conservare gli zeri iniziali.
-- **Causa:** `dtype={"customer_id": str}` si applica al nome di colonna originale, quello con gli spazi.
-  Gli spazi venivano tolti solo dopo la lettura, quindi la colonna era già stata letta come numero.
-- **Correzione:** tutte le colonne vengono lette come testo (`dtype=str`). kWh ed epoch vengono poi
-  convertiti con `_to_number`, che accetta anche la virgola decimale. Gli id vuoti diventano NaN.
+- **Symptom:** with a header like `" customer_id ";...` and ids made only of digits (`000123`), the
+  program fails (`AttributeError: Can only use .str accessor with string values`). Without the crash,
+  `000123` would become `123`, while the challenge asks to keep leading zeros.
+- **Cause:** `dtype={"customer_id": str}` applies to the original column name, the one with spaces.
+  The spaces were removed only after reading, so the column had already been read as a number.
+- **Fix:** all columns are read as text (`dtype=str`). kWh and epoch are then converted to numbers,
+  accepting the decimal comma too. Empty ids become NaN.
 - **Test:** `test_header_with_spaces_keeps_leading_zeros`.
 
-## 3. Righe ripetute tenute in inferenza
+## 3. Repeated rows kept at inference time
 - **File:** `inference.py`, `read_test`.
-- **Sintomo:** nessun errore, ma le righe con stesso cliente e stesso epoch venivano contate due volte
-  nelle medie.
-- **Causa:** in sviluppo `load_series` toglie i duplicati, `read_test` no. Il modello era quindi valutato
-  su dati diversi da quelli che vede in gara.
-- **Correzione:** dopo l'ordinamento, `drop_duplicates(["customer_id", "timestamp_epoch"], keep="first")`
-  con un avviso, come fa `load_series`.
+- **Symptom:** no error, but rows with the same customer and the same epoch were counted twice
+  in the means.
+- **Cause:** during development `load_series` removes duplicates, `read_test` did not. The model was
+  therefore validated on data different from what it sees in the competition.
+- **Fix:** after sorting, `drop_duplicates(["customer_id", "timestamp_epoch"], keep="first")`
+  with a warning, as `load_series` does.
 - **Test:** `test_read_test_drops_duplicates`.
 
-## 4. Date "NaT" e kWp infiniti accettati dagli adattatori
-- **File:** `inference.py`, `call_date` e `call_capacity`.
-- **Sintomo:** se `date.estimate` restituisce `NaT` o `None`, nel CSV finisce la data `NaT`, che vale 0
-  per D. Se restituisce `"2024-5-1"`, la data esce in un formato diverso da AAAA-MM-GG. Se
-  `capacity.estimate` restituisce `inf`, nel CSV finisce `inf`.
-- **Causa:** `pd.Timestamp("NaT")` non solleva eccezioni, e la data veniva presa così com'era con
-  `str(out)[:10]`. Il controllo `kwp > 0` è vero anche per `inf`.
-- **Correzione:** una data `NaT` solleva un'eccezione, quindi si usa la riserva (primo giorno della serie).
-  La data viene sempre scritta con `strftime("%Y-%m-%d")`. Il kWp deve essere finito, altrimenti si usa
-  la riserva (la mediana).
-- **Nota:** oggi `date.py` e `capacity.py` non producono questi valori. È una protezione degli adattatori,
-  che esistono proprio per questo.
+## 4. "NaT" dates and infinite kWp accepted by the adapters
+- **File:** `inference.py`, `call_date` and `call_capacity`.
+- **Symptom:** if `date.estimate` returns `NaT` or `None`, the date `NaT` ends up in the CSV, which scores 0
+  for D. If it returns `"2024-5-1"`, the date is written in a format other than YYYY-MM-DD. If
+  `capacity.estimate` returns `inf`, `inf` ends up in the CSV.
+- **Cause:** `pd.Timestamp("NaT")` raises no exception, and the date was taken as it was with
+  `str(out)[:10]`. The check `kwp > 0` is true for `inf` as well.
+- **Fix:** a `NaT` date raises an exception, so the fallback is used (first day of the series).
+  The date is always written with `strftime("%Y-%m-%d")`. The kWp must be finite, otherwise the
+  fallback (the median) is used.
+- **Note:** `date.py` and `capacity.py` do not produce these values today. This is a safeguard of the
+  adapters, which exist precisely for this purpose.
 - **Test:** `test_call_date_rejects_nat_and_normalizes`, `test_call_capacity_rejects_inf`.
 
-## 5. Alias obsoleto in `loo_pipeline.py`
+## 5. Obsolete alias in `loo_pipeline.py`
 - **File:** `src/eval/loo_pipeline.py`.
-- **Sintomo:** nessun errore, ma il codice registrava un modulo finto `src.eval.score_date`. Il commento
-  diceva che `run_detect.py` lo usava ancora, il che non è più vero da 8609d26.
-- **Correzione:** tolte le tre righe. `test_loo_pipeline.py` passa e la validazione dà gli stessi
-  punteggi (79,19 / 78,10 / 77,93).
+- **Symptom:** no error, but the code registered a fake module `src.eval.score_date`, which no
+  script used any more.
+- **Fix:** the three lines were removed. `test_loo_pipeline.py` passes and the validation gives the same
+  scores (79.19 / 78.10 / 77.93).
 
-## Come riprovare
+## How to re-run
 ```
 python -m pytest -q
 python -m pytest -q tests/test_inference.py -k "epoch_missing or header_with_spaces or drops_duplicates or rejects_nat or rejects_inf"
 ```
-I cinque test della seconda riga falliscono sull'`inference.py` di `main` e passano su questo branch.

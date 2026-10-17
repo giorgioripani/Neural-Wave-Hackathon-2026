@@ -1,32 +1,27 @@
-# Neural Wave 2026: rilevamento del fotovoltaico dai profili di consumo (AIL)
+# Neural Wave 2026: PV detection from smart-meter load profiles (AIL challenge)
+
+The AIL challenge asks, from nothing but a customer's 15-minute grid withdrawal curve (2022-2025), whether the customer has a photovoltaic (PV) plant, when the initial plant was commissioned and how large it is in kWp, with an optional bonus for later extensions of the plant. Our solution relies on one physical signal: after a PV installation the customer withdraws less from the grid around midday, much more on sunny summer days than in winter. Three small, transparent models (a threshold rule, a seasonal step regression and a linear regression) turn this signal into the three answers, using only consumption and calendar information with fixed UTC hours: no weather, irradiance, location or sun-position data.
 
 ## Team
-| Nome e cognome | Ruolo |
+| Name | Role |
 | --- | --- |
-| Giorgio Ripani | Integrazione, `inference.py`, consegna |
-| Leonardo Lodolini | Task 2: data di messa in servizio |
-| Andrea Gallo | Dati, valutazione, report |
-| Flavio Davide Borriello | Task 1: rilevamento del fotovoltaico, README |
-| Francesco Tassi | Task 3: capacità in kWp, grafici, video |
+| Giorgio Ripani | Integration, `inference.py`, delivery |
+| Flavio Davide Borriello | Task 1: PV detection |
+| Leonardo Lodolini | Task 2: installation date, extensions |
+| Francesco Tassi | Task 3: capacity in kWp, figures, video |
+| Andrea Gallo | Data loading, scoring and validation, report |
 
-## Cosa fa
-Dalla sola curva dei prelievi dalla rete a 15 minuti di ogni cliente, il programma stima:
-1. se il cliente ha un impianto fotovoltaico;
-2. la data di messa in servizio dell'impianto iniziale;
-3. la capacità dell'impianto iniziale in kWp;
-4. (facoltativo) le estensioni successive dell'impianto, con la capacità totale dopo ciascuna.
+## Requirements
+- **Python 3.12** (tested on Windows, macOS and Linux).
+- All dependencies, with exact pinned versions, are in `requirements.txt` (numpy, pandas, scipy, scikit-learn, pyarrow, duckdb, matplotlib, ruptures, pytest).
 
-Il segnale è uno solo: dopo l'installazione, a mezzogiorno il cliente preleva meno dalla rete, molto di più nei giorni sereni d'estate che d'inverno. Tutti i modelli sono semplici (regole a soglia, regressioni lineari) e usano solo i consumi e il calendario, con fasce orarie fisse in UTC.
-
-## Come eseguire
-Richiede **Python 3.12** (testato su Windows, macOS e Linux). Tutte le dipendenze, con versioni fissate, sono in `requirements.txt`.
-
+## Setup and run
 Linux / macOS:
 ```
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python inference.py percorso/test_set.csv
+python inference.py path/to/test_set.csv
 ```
 
 Windows:
@@ -34,82 +29,88 @@ Windows:
 py -3.12 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python inference.py percorso\test_set.csv
+python inference.py path\to\test_set.csv
 ```
 
-Facoltativo, prima di `inference.py`: `python demo/check_env.py` controlla versione di Python, pacchetti, artefatti e moduli, e termina con `AMBIENTE OK` o con l'elenco dei problemi.
+`inference.py` is the single entry point and takes exactly one positional argument, the test CSV (the separator is detected automatically). It loads the trained artifacts from `artifacts/` automatically, needs no network access and writes two files to the **current folder** (UTF-8, semicolon separator, decimal point):
 
-Il programma scrive nella cartella corrente due file (UTF-8, punto e virgola come separatore, punto decimale):
-
-- `predictions.csv`, una riga per ogni cliente del test:
+- `predictions.csv`, one row for every customer of the test set:
   `customer_id;pv_installed;pv_installation_date;pv_capacity_kwp`
-  con `TRUE`/`FALSE`, date `AAAA-MM-GG`, capacità in kWp; data e capacità vuote se `pv_installed=FALSE`.
-  I valori si riferiscono all'impianto iniziale.
-- `pv_extensions_predictions.csv` (compito facoltativo), una riga per ogni estensione prevista:
+  with `TRUE`/`FALSE`, dates as `YYYY-MM-DD` and capacity in kWp; date and capacity are empty when `pv_installed=FALSE`. Values refer to the initial plant.
+- `pv_extensions_predictions.csv` (optional task), one row per predicted extension:
   `customer_id;extension_date;pv_capacity_after_extension_kwp`
-  con la capacità totale dopo l'estensione. Se non ci sono estensioni contiene solo l'intestazione.
+  with the total capacity after the extension. If no extension is predicted, the file contains only the header.
 
-Non servono rete né interventi manuali. I modelli addestrati sono in `artifacts/` e vengono caricati da `inference.py`.
+Optional, before running inference: `python demo/check_env.py` checks the Python version, the installed package versions, the artifacts and the model modules, and ends with `ENVIRONMENT OK` or with the list of problems.
 
-## Dati
-I dati appartengono ad AIL e **non sono inclusi** nel repository. Per riaddestrare i modelli, copiare i file forniti in `data/raw/` e prepararli con:
-```
-python src/loading/prepare_data.py data/raw/<file>.csv data/clean/<nome>.parquet
-```
-La soluzione usa solo i consumi e le informazioni di calendario (ora, giorno, mese): nessun dato meteo, di irraggiamento o di posizione.
+The challenge data belong to AIL and are **not included** in this repository. To retrain the models, put the provided files in `data/raw/` and prepare them with `python src/loading/prepare_data.py data/raw/<file>.csv data/clean/<name>.parquet`.
 
-## Struttura del repository
+## Repository structure
 ```
-inference.py        punto di ingresso
-requirements.txt    dipendenze con versioni fissate
-src/loading/        caricamento e pulizia dei dati (filtro customer_id POD)
-src/models/         rilevamento, data, capacità
-src/eval/           punteggio ufficiale e validazione
-src/viz/            grafici
-artifacts/          modelli salvati
-docs/               report, registro del lavoro (LOG.md)
-tests/              test automatici
+inference.py        entry point (one positional argument: the test CSV)
+requirements.txt    dependencies with pinned versions
+artifacts/          trained parameters loaded by inference.py (JSON)
+src/loading/        data loading, POD filter for development data, tolerant test reader
+src/models/         detection (detect.py), date (date.py), capacity (capacity*.py),
+                    extensions (extensions.py), training and development scripts
+src/eval/           official score, leave-one-out validation of the full pipeline
+demo/               environment check, fake test set builder, smoke test
+tests/              automated tests on synthetic data only
+docs/               work log (LOG.md), bug fixes (BUGFIXES.md), report
 ```
 
-## Metodo e risultati
-Per ogni cliente si calcolano cifre giornaliere (giorni UTC, così l'ora legale non crea problemi): consumo medio per quarto d'ora nelle fasce notte (0-4 UTC), mattino, mezzogiorno (10-13 UTC) e pomeriggio.
+## Method
+Each customer's series is turned into daily figures on UTC days (so daylight saving time causes no trouble): mean consumption per quarter-hour in fixed UTC bands, mainly night (0-4 UTC), morning (6-8), midday (10-13) and afternoon (16-19).
 
-**Task 1, c'è il fotovoltaico?** (`src/models/detect.py`). Regola a soglia su due cifre:
-- `dip_spread`: in estate, ogni giorno si misura il "buco" di mezzogiorno rispetto a mattino e pomeriggio, e si prende la differenza fra i giorni con il buco più forte e quelli con il buco più debole (90° e 10° percentile). Con il fotovoltaico il buco va e viene con le nuvole, senza fotovoltaico resta quasi costante.
-- `rec_drop`, solo per chi la prima regola dice "no": buco degli ultimi 90 giorni rispetto agli stessi giorni dell'anno prima. Serve per gli impianti installati da poco.
+**Task 1, PV detection** (`src/models/detect.py`). A two-step threshold rule:
+- `dip_spread`: on every summer day the midday "dip" is measured against morning and afternoon; the feature is the spread between days with the deepest and the shallowest dip (90th minus 10th percentile). With PV the dip comes and goes with the clouds; without PV it stays almost constant.
+- `rec_drop`, only for customers the first rule calls "no PV": the dip of the last 90 days compared with the same days one year earlier, to catch recent installations.
 
-Le soglie massimizzano l'F1 su finestre di 2 anni dei clienti di sviluppo (`src/models/run_detect.py`) e sono salvate in `artifacts/detect_params.json`. Le due cifre usano solo gli ultimi 2 anni di ogni cliente, anche se il test ne ha circa 4: così la previsione vede la stessa lunghezza delle finestre di addestramento e meno cambi di abitudini. Un impianto installato prima resta visibile, perché c'è ancora alla fine dei dati. La data e i kWp usano invece tutta la serie.
+Both features are computed on the **last 2 years** of each customer, the same length as the 2-year training windows on which the thresholds are fitted to maximise F1 (`src/models/run_detect.py`, saved in `artifacts/detect_params.json`). A plant installed earlier is still visible, since it is still there at the end of the data. Date and capacity use the full series.
 
-**Task 2, data di messa in servizio** (`src/models/date.py`). Il logaritmo del rapporto mezzogiorno/notte di ogni giorno è modellato con una costante, una stagionalità annuale (seno e coseno) e un gradino. Si prova ogni data candidata e vince quella con l'errore quadratico minimo. Se nessun gradino migliora l'errore di almeno il 5%, l'impianto c'era già all'inizio dei dati e si risponde con il primo giorno. Nessun parametro è addestrato sui dati.
+**Task 2, installation date** (`src/models/date.py`). The log of the daily midday/night ratio is modelled as a constant plus a yearly seasonality (sine and cosine) plus a step. Every candidate date is tried and the one with the smallest squared error wins. If no step reduces the error by at least 5%, the plant was already there at the start of the data and the first day is returned. No parameter is trained on the data.
 
-**Task 3, capacità in kWp** (`src/models/capacity.py`). Dopo la data stimata si misura di quanti kW cala il prelievo a mezzogiorno rispetto al livello atteso senza fotovoltaico (stimato dalla notte, che non vede il sole). Una regressione lineare trasforma il calo in kWp, poi la stima viene avvicinata alla mediana dei kWp di sviluppo con una media geometrica. Parametri in `artifacts/capacity.json` (`src/models/train_capacity.py`).
+**Task 3, capacity** (`src/models/capacity.py`). After the estimated date, the model measures how many kW the midday withdrawal drops compared with the level expected without PV, estimated from the night baseline (the night sees no sun and follows the customer's activity). A linear regression turns this drop into kWp, and the estimate is then pulled towards the median development kWp with a geometric mean, which limits large errors on extreme cases. Parameters in `artifacts/capacity.json` (`src/models/train_capacity.py`).
 
-**Estensioni (facoltativo)** (`src/models/extensions.py`). Stesso modello del Task 2, cercando un secondo gradino verso il basso almeno 60 giorni dopo l'installazione e almeno 60 giorni prima della fine dei dati. Si scrivono al massimo 3 estensioni in tutto, le più nette.
+**Extensions, optional** (`src/models/extensions.py`). The same step model as Task 2, searching for a second downward step at least 60 days after the installation and at least 60 days before the end of the data; at most 3 extensions are written in total, the clearest ones.
 
-**Robustezza** (`inference.py`, `src/loading/load.py`). Il CSV del test è letto con un lettore tollerante: righe con data non valida tolte, consumi non numerici lasciati vuoti, nessun cliente perso. Ogni modulo ha una riserva: se il rilevamento fallisce il cliente è segnato con fotovoltaico, e se data o kWp falliscono si usano il primo giorno dei dati e la mediana dei kWp. Se fallisce tutta la pipeline, si scrivono comunque i file con tutti i clienti.
+**Robustness and fallbacks** (`inference.py`, `src/loading/load.py`). The test CSV is read with a tolerant reader: rows with an invalid timestamp are dropped, non-numeric consumption values are left empty, negative values are set to 0 and no customer is ever lost. Every module has a fallback: if detection fails the customer is marked with PV, and if date or capacity fail the first day of the data and the median kWp are used. If the whole pipeline fails, both files are still written with every customer.
 
-**Risultati.** Validazione a un cliente alla volta sui 40 clienti etichettati (`python -m src.eval.loo_pipeline`): ogni cliente è previsto con soglie di detect e coefficienti dei kWp ricalcolati senza di lui, sulla sua serie intera come nel test (2022-2025). Punteggio = F1 × (70 + 15 × D + 15 × P).
+## Validation and results
+Leave-one-customer-out on the 40 labelled development customers (`python -m src.eval.loo_pipeline --protocol serie_intera --modes tutto_loo`): each customer is predicted with detection thresholds and capacity coefficients refitted without it, on its **full series** as in the test (2022-2025). Score = F1 × (70 + 15 × D + 15 × P), where D (date) and P (capacity) are averaged over the true positives: D = max(0, 1 − days of error / 30), P = max(0, 1 − relative error / 0.5).
 
-| Versione | F1 | D (data) | P (kWp) | Punteggio |
+| Version | F1 | D (date) | P (kWp) | Score |
 | --- | --- | --- | --- | --- |
-| Riferimento: tutti con fotovoltaico, data a metà dei dati, kWp mediano | 0,710 | 0,045 | 0,415 | 54,58 |
-| Versione precedente (`v2-consegna`): rilevamento su tutta la serie | 0,905 | 0,665 | 0,452 | 78,49 |
-| Pipeline finale, serie intera | 0,952 | 0,632 | 0,429 | **81,82** |
-| Pipeline finale, finestre di 2 anni (5 giri, prova di robustezza) | 0,909 | 0,608 | 0,439 | 77,93 ± 2,42 |
+| Baseline: everyone with PV, date in the middle of the data, median kWp | 0.710 | 0.045 | 0.415 | 54.58 |
+| Previous version: detection features on the full series | 0.905 | 0.665 | 0.452 | 78.49 |
+| Final pipeline, full series | 0.952 | 0.632 | 0.429 | **81.82** |
+| Final pipeline, 2-year windows (5 rounds, robustness check) | 0.909 | 0.608 | 0.439 | 77.93 ± 2.42 |
 
-Sulla serie intera: 20 impianti trovati su 22, nessun falso allarme su 18 clienti senza fotovoltaico. Rispetto alla versione precedente cambiano 2 clienti (un impianto trovato in più, un falso allarme in meno); D e P calano un poco perché l'impianto in più ha data e kWp molto sbagliati. Date: errore mediano di 1 giorno, 13 su 20 entro 7 giorni. kWp: errore mediano del 22%. Estensioni: nei dati di sviluppo ce n'è una sola etichettata, che il metodo non trova (bonus 0 sul dev).
+On the full series 20 of the 22 PV plants are found with no false alarm among the 18 customers without PV. Compared with the previous version 2 customers change (one more plant found, one false alarm fewer); D and P drop slightly because the additional plant has a poor date and kWp. Dates: median error of 1 day, 13 of 20 within 7 days. Capacity: median relative error of 22%. Extensions: the development data contain a single labelled extension, which the method does not find (bonus 0 on dev).
 
-## Limiti
-- **Pochi esempi.** 40 clienti etichettati, 22 con fotovoltaico: un cliente in più o in meno sposta il punteggio di circa 2 punti. Le soglie e i coefficienti sono ricalcolati in validazione, ma la scelta delle cifre e dei metodi è stata fatta guardando tutti i 40 clienti, quindi il punteggio è un po' ottimista.
-- **Impianti non visti.** 2 impianti su 22 hanno un segnale troppo debole: sono grandi utenze che di notte consumano da 1,6 a 5,4 volte i kWp dell'impianto.
-- **Soglia del rilevamento.** Sui 1147 clienti senza etichetta la soglia di `dip_spread` cade sulla coda del gruppo senza fotovoltaico, non in una valle fra i due gruppi: sul test qualche falso allarme è possibile anche se sul dev non ce ne sono. Un cliente con pochi dati negli ultimi 2 anni risulta senza fotovoltaico.
-- **kWp.** Vediamo solo i prelievi, non la produzione: l'energia autoconsumata non si vede. Se l'impianto copre tutto il consumo, il prelievo si ferma a zero e i grandi impianti sono sottostimati. 8 clienti su 20 hanno un errore oltre il 50%, e la sola mediana arriva già a P 0,415.
-- **Date.** 5 date su 20 sbagliano di oltre 30 giorni: impianti presenti dall'inizio dei dati o con un avvio graduale.
-- **Estensioni.** Senza meteo, un mese più soleggiato di quello dell'anno prima sposta il segnale quanto un'estensione. Un'estensione recente, con pochi mesi di dati dopo, è quasi invisibile. Con un solo esempio etichettato, il metodo non è validato su casi veri.
+## Experiments tried and discarded
+All numbers come from the same leave-one-out protocol; details in `docs/LOG.md`.
+- **Logistic regression** for detection (several feature sets, standardised, L2, balanced classes): never better than the threshold rule. On the previous version, a regression on `dip_spread`, `rec_drop`, `drop` and `step` scored 78.70 against 78.49 for the rule, a difference well inside the noise (paired bootstrap 5-95%: −3.95 to +4.56).
+- **Decision trees and a random forest** on all detection features: at best they tie the rule (LOO F1 0.927-0.952), with fragile root splits; deeper models overfit the 40 customers.
+- **Pseudo-labels on the 1,147 unlabelled customers**: a customer was pseudo-labelled only when three models agreed (the rule, a logistic regression and a tree, plus a confidence threshold on the regression), always nested inside the leave-one-out. Across 11 student variants (agreement thresholds from 0.95/0.05 to 0.7/0.3, balanced or not, weight 0.3 or 1.0) no detection decision changed on the 40 labelled customers: the pseudo-labels made the model more confident without moving its boundary.
+- **Extra detection features** (22 variants, including year-over-year drop, midday noise ratio, midday jaggedness, bell-shaped profile score and `sunday_spread`, the dip spread on Sundays only): on the previous version the best one, `sunday_spread`, fixed 2 customers, but it was the best of 22 tries on the same 40 customers. On the final version no variant fixes any customer; some add errors or raise the share of unlabelled customers predicted with PV.
+- **Detection features on the full series**: computing `dip_spread` and `rec_drop` on the whole 4-year series, while the thresholds are fitted on 2-year windows, gave F1 0.905 and 78.49; using the last 2 years, consistent with the training windows, gave 0.952 and 81.82.
+- Other discarded ideas for date, capacity and extensions (change-point and seasonal-step variants, local date refinement, size-based and ridge capacity models, year-over-year extension detection) are listed in `docs/LOG.md`.
 
-## Uso di agenti e assistenti IA
-Più membri del team hanno usato Claude Code (Anthropic) come assistente di programmazione. Lo hanno usato per scrivere e rivedere codice e test, per gli script di validazione e per la ricerca dei casi limite su dati sintetici. Regola del team (in `CLAUDE.md`): gli assistenti vedono solo dati aggregati per cliente (cifre, metriche, previsioni contro etichette), mai le righe grezze dei consumi. Nessun LLM fa parte della pipeline di `inference.py`. Ogni uso importante di un agente e ogni idea scartata, con i numeri, è registrato in `docs/LOG.md`.
+## Limitations
+- **Few examples.** 40 labelled customers, 22 with PV: one customer more or less moves the score by about 2-4 points. Thresholds and coefficients are refitted in validation, but features and methods were chosen looking at all 40 customers, so the score is somewhat optimistic.
+- **Missed plants.** 2 of 22 plants have a signal that is too weak: they belong to large consumers whose night load is several times the plant's kWp.
+- **Detection threshold.** On the 1,147 unlabelled customers the `dip_spread` threshold falls on the tail of the no-PV group rather than in a valley between the groups, so a few false alarms are possible on new customers even though there are none on dev. A customer with little data in the last 2 years is classified as without PV.
+- **Capacity.** Only withdrawals are observed, not production: self-consumed energy is invisible. When the plant covers the whole consumption the withdrawal stops at zero and large plants are underestimated. 8 of 20 customers have an error above 50%, and the median alone already reaches P 0.415.
+- **Dates.** 5 of 20 dates are more than 30 days off: plants present from the start of the data or with a gradual start-up.
+- **Extensions.** Without weather data, a sunnier month than the same month one year earlier moves the signal as much as an extension does; a recent extension with few months of data after it is almost invisible. With a single labelled example the method is not validated on real cases.
 
-## Fonti e crediti
-- Librerie: numpy, pandas, scipy, scikit-learn, pyarrow, duckdb, matplotlib, ruptures, pytest (versioni in `requirements.txt`).
-- Dati: il dataset appartiene ad AIL SA ed è stato fornito per la sfida Neural Wave 2026. Non è incluso nel repository.
+## Use of AI assistants
+Team members used AI coding assistants (Claude Code) for development only: writing, reviewing and testing code, validation scripts and synthetic edge-case tests. No LLM is part of the analysis or prediction pipeline: `inference.py` runs only the models described above. The assistants saw only aggregated values (per-customer features, metrics, predictions against labels), never the raw AIL consumption data. Important uses of an assistant are recorded in `docs/LOG.md`.
+
+## Report and video
+- Report: `docs/report.pdf`
+- Video (2 min): <YouTube unlisted link>
+
+## License
+MIT, see `LICENSE`. The AIL dataset is not covered by this license and is not included in the repository.
