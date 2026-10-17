@@ -78,7 +78,7 @@ Per ogni cliente si calcolano cifre giornaliere (giorni UTC, così l'ora legale 
 - `dip_spread`: in estate, ogni giorno si misura il "buco" di mezzogiorno rispetto a mattino e pomeriggio, e si prende la differenza fra i giorni con il buco più forte e quelli con il buco più debole (90° e 10° percentile). Con il fotovoltaico il buco va e viene con le nuvole, senza fotovoltaico resta quasi costante.
 - `rec_drop`, solo per chi la prima regola dice "no": buco degli ultimi 90 giorni rispetto agli stessi giorni dell'anno prima. Serve per gli impianti installati da poco.
 
-Le soglie massimizzano l'F1 su finestre di 2 anni dei clienti di sviluppo (`src/models/run_detect.py`) e sono salvate in `artifacts/detect_params.json`.
+Le soglie massimizzano l'F1 su finestre di 2 anni dei clienti di sviluppo (`src/models/run_detect.py`) e sono salvate in `artifacts/detect_params.json`. Le due cifre usano solo gli ultimi 2 anni di ogni cliente, anche se il test ne ha circa 4: così la previsione vede la stessa lunghezza delle finestre di addestramento e meno cambi di abitudini. Un impianto installato prima resta visibile, perché c'è ancora alla fine dei dati. La data e i kWp usano invece tutta la serie.
 
 **Task 2, data di messa in servizio** (`src/models/date.py`). Il logaritmo del rapporto mezzogiorno/notte di ogni giorno è modellato con una costante, una stagionalità annuale (seno e coseno) e un gradino. Si prova ogni data candidata e vince quella con l'errore quadratico minimo. Se nessun gradino migliora l'errore di almeno il 5%, l'impianto c'era già all'inizio dei dati e si risponde con il primo giorno. Nessun parametro è addestrato sui dati.
 
@@ -93,16 +93,18 @@ Le soglie massimizzano l'F1 su finestre di 2 anni dei clienti di sviluppo (`src/
 | Versione | F1 | D (data) | P (kWp) | Punteggio |
 | --- | --- | --- | --- | --- |
 | Riferimento: tutti con fotovoltaico, data a metà dei dati, kWp mediano | 0,710 | 0,045 | 0,415 | 54,58 |
-| Pipeline finale, serie intera | 0,905 | 0,665 | 0,452 | **78,49** |
+| Versione precedente (`v2-consegna`): rilevamento su tutta la serie | 0,905 | 0,665 | 0,452 | 78,49 |
+| Pipeline finale, serie intera | 0,952 | 0,632 | 0,429 | **81,82** |
 | Pipeline finale, finestre di 2 anni (5 giri, prova di robustezza) | 0,909 | 0,608 | 0,439 | 77,93 ± 2,42 |
 
-Sulla serie intera: 19 impianti trovati su 22, 1 falso allarme su 18 clienti senza fotovoltaico. Date: errore mediano di 1 giorno, 13 su 19 entro 7 giorni. kWp: errore mediano del 22%. Estensioni: nei dati di sviluppo ce n'è una sola etichettata, che il metodo non trova (bonus 0 sul dev).
+Sulla serie intera: 20 impianti trovati su 22, nessun falso allarme su 18 clienti senza fotovoltaico. Rispetto alla versione precedente cambiano 2 clienti (un impianto trovato in più, un falso allarme in meno); D e P calano un poco perché l'impianto in più ha data e kWp molto sbagliati. Date: errore mediano di 1 giorno, 13 su 20 entro 7 giorni. kWp: errore mediano del 22%. Estensioni: nei dati di sviluppo ce n'è una sola etichettata, che il metodo non trova (bonus 0 sul dev).
 
 ## Limiti
 - **Pochi esempi.** 40 clienti etichettati, 22 con fotovoltaico: un cliente in più o in meno sposta il punteggio di circa 2 punti. Le soglie e i coefficienti sono ricalcolati in validazione, ma la scelta delle cifre e dei metodi è stata fatta guardando tutti i 40 clienti, quindi il punteggio è un po' ottimista.
-- **Impianti non visti.** 3 impianti su 22 hanno un segnale troppo debole rispetto al consumo del cliente.
-- **kWp.** Vediamo solo i prelievi, non la produzione: l'energia autoconsumata non si vede. Se l'impianto copre tutto il consumo, il prelievo si ferma a zero e i grandi impianti sono sottostimati. 7 clienti su 19 hanno un errore oltre il 50%, e la sola mediana arriva già a P 0,415.
-- **Date.** 4 date su 19 sbagliano di oltre 30 giorni: impianti presenti dall'inizio dei dati o con un avvio graduale.
+- **Impianti non visti.** 2 impianti su 22 hanno un segnale troppo debole: sono grandi utenze che di notte consumano da 1,6 a 5,4 volte i kWp dell'impianto.
+- **Soglia del rilevamento.** Sui 1147 clienti senza etichetta la soglia di `dip_spread` cade sulla coda del gruppo senza fotovoltaico, non in una valle fra i due gruppi: sul test qualche falso allarme è possibile anche se sul dev non ce ne sono. Un cliente con pochi dati negli ultimi 2 anni risulta senza fotovoltaico.
+- **kWp.** Vediamo solo i prelievi, non la produzione: l'energia autoconsumata non si vede. Se l'impianto copre tutto il consumo, il prelievo si ferma a zero e i grandi impianti sono sottostimati. 8 clienti su 20 hanno un errore oltre il 50%, e la sola mediana arriva già a P 0,415.
+- **Date.** 5 date su 20 sbagliano di oltre 30 giorni: impianti presenti dall'inizio dei dati o con un avvio graduale.
 - **Estensioni.** Senza meteo, un mese più soleggiato di quello dell'anno prima sposta il segnale quanto un'estensione. Un'estensione recente, con pochi mesi di dati dopo, è quasi invisibile. Con un solo esempio etichettato, il metodo non è validato su casi veri.
 
 ## Uso di agenti e assistenti IA

@@ -3,7 +3,7 @@
 Ognuno modifica solo la propria riga e aggiorna quando chiude un pezzo (non a ogni commit).
 Gli agenti leggono questo file per sapere cosa fanno gli altri: tenerlo breve e vero.
 
-Ultimo aggiornamento: 17/10 da Flavio (merge flavio/detect3 in main, tag `v3-consegna`)
+Ultimo aggiornamento: 17/10 da Flavio (README aggiornato, tag `v3.1-consegna` = versione piu' recente)
 Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). Poi presentazione da 5 minuti.
 
 ## Chi fa cosa
@@ -25,7 +25,7 @@ Consegna: domenica 18 ottobre, ore 11:00 (obiettivo: pubblicato entro le 9:30). 
 - [ ] Dopo la consegna: presentazione da 5 minuti
 
 ## Fatto (già in main)
-- 17/10 Flavio: merge `flavio/detect3` in main (tag `v3-consegna`): detect sugli ultimi 2 anni. Verifiche sul branch: 214 test, check_env OK, inference su fake_test e fake_test_2y (riserve 0, nessun crash), test_sporco (uscite identiche a main), serie corte o con buchi (nessun crash, nessuna riserva). LOO serie intera 78,49 -> 81,82: cambiano 2 clienti (1 FN -> TP, 1 FP -> TN), gli altri 38 identici. README da aggiornare (riporta ancora 78,49).
+- 17/10 Flavio: merge `flavio/detect3` in main (tag `v3-consegna`): detect sugli ultimi 2 anni. Verifiche sul branch: 214 test, check_env OK, inference su fake_test e fake_test_2y (riserve 0, nessun crash), test_sporco (uscite identiche a main), serie corte o con buchi (nessun crash, nessuna riserva). LOO serie intera 78,49 -> 81,82: cambiano 2 clienti (1 FN -> TP, 1 FP -> TN), gli altri 38 identici. README aggiornato con i nuovi numeri (tag `v3.1-consegna`, versione piu' recente).
 - 17/10 Andrea (d'accordo con Giorgio): merge PR #7 (README completo, tolto DatabaseReadme.md); verificato su clone pulito da GitHub: AMBIENTE OK, 205 test, previsioni identiche a f82db85 (fake_test 78,66 in-sample), LOO 78,49. Tag `v2-consegna` spostato sull'ultima main.
 - 17/10 Giorgio: merge finale in main (f82db85, tag `v2-consegna`): ImprovementDetectAlgorythm, PR #6 (load_test), fix/bug-fixes, PR #5 (score_ext), Leonardo/date-agg; detect con crash -> TRUE; test 2022-2025 (fake_test serie intera, fake_test_2y); 205 test; previsioni sul test a 2 anni identiche a prima dei merge.
 - 17/10 Leonardo: estensioni in main (c18a288) e collegate in `inference.py` (09e9ce2): al massimo 3 righe in `pv_extensions_predictions.csv`, riserva `ext` nel riepilogo; `predictions.csv` invariato (78,38), tempo su fake_test 14 s.
