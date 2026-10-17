@@ -31,6 +31,8 @@ pip install -r requirements.txt
 python inference.py percorso\test_set.csv
 ```
 
+Facoltativo, prima di `inference.py`: `python demo/check_env.py` controlla versione di Python, pacchetti, artefatti e moduli, e termina con `AMBIENTE OK` o con l'elenco dei problemi.
+
 Il programma scrive nella cartella corrente due file (UTF-8, punto e virgola come separatore, punto decimale):
 
 - `predictions.csv`, una riga per ogni cliente del test:
