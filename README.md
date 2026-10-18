@@ -127,8 +127,8 @@ All numbers come from the same leave-one-out protocol; details in `docs/LOG.md`.
 Team members used AI coding assistants (Claude Code) for development only: writing, reviewing and testing code, validation scripts and synthetic edge-case tests. No LLM is part of the analysis or prediction pipeline: `inference.py` runs only the models described above. The assistants saw only aggregated values (per-customer features, metrics, predictions against labels), never the raw AIL consumption data. Important uses of an assistant are recorded in `docs/LOG.md`.
 
 ## Report and video
-- Report: `docs/report.pdf`
-- Video (2 min): <YouTube unlisted link>
+- Report: `deliverables/report.pdf`
+- Video (2 min): `deliverables/youtube_link.txt`
 
 ## License
 MIT, see `LICENSE`. The AIL dataset is not covered by this license and is not included in the repository.
