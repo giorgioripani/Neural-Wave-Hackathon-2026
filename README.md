@@ -12,7 +12,7 @@ The AIL challenge asks, starting from 15-minute grid consumption curve (2022-202
 | Andrea Gallo | Data loading, scoring and validation, report |
 
 ## Requirements
-- **Python 3.12** (tested on Windows, macOS and Linux).
+- **Python 3.12** (tested on Linux and Windows).
 - All dependencies, with exact pinned versions, are in `requirements.txt` (numpy, pandas, scipy, scikit-learn, pyarrow, duckdb, matplotlib, ruptures, pytest).
 
 ## Setup and run
@@ -43,7 +43,13 @@ python inference.py path\to\test_set.csv
 
 Optional, before running inference: `python demo/check_env.py` checks the Python version, the installed package versions, the artifacts and the model modules, and ends with `ENVIRONMENT OK` or with the list of problems.
 
-The challenge data belong to AIL and are **not included** in this repository. To retrain the models, put the provided files in `data/raw/` and prepare them with `python src/loading/prepare_data.py data/raw/<file>.csv data/clean/<name>.parquet`.
+The challenge data belong to AIL and are **not included** in this repository; the trained artifacts are, so retraining is not needed to run `inference.py`. To retrain the models from scratch, put the provided files (`energy_consumption_dev.csv`, `pv_labels_dev.csv`, `pv_extensions_labels_dev.csv`) in `data/raw/` and run, from the repository root:
+```
+python src/loading/prepare_data.py data/raw/energy_consumption_dev.csv data/clean/dev.parquet
+python src/models/run_detect.py          # detection thresholds -> artifacts/detect_params.json
+python -m src.models.train_capacity      # capacity model      -> artifacts/capacity.json
+```
+The scripts expect the Parquet file to be named exactly `data/clean/dev.parquet`. Retraining reproduces the committed artifacts exactly.
 
 ## Repository structure
 ```
@@ -64,9 +70,9 @@ Each customer's series is turned into daily figures on UTC days (so daylight sav
 
 **Task 1, PV detection** (`src/models/detect.py`). A two-step threshold rule:
 - `dip_spread`: solar panels make consumption drop around midday, but only when the sun is out. So for each summer day we measure how deep the midday dip is compared with the morning and afternoon, and then look at how much that dip changes from one day to the next. With PV the dip comes and goes with the clouds, so this spread is large; without PV the midday consumption looks much the same every day.
-- `rec_drop`: a plant installed only a few months after the end of the period of interest barely shows up in the summer spread, because most of the data was recorded before it existed. So for customers the first rule calls "no PV", we take a second look: we compare the midday dip of the last 90 days with the same 90 days one year earlier. If the dip has clearly grown, something new is producing at midday, and we mark the customer as PV.
+- `rec_drop`: a plant installed only a few months before the end of the data barely shows up in the summer spread, because most of the data was recorded before it existed. So for customers the first rule calls "no PV", we take a second look: we compare the midday dip of the last 90 days with the same 90 days one year earlier. If the dip has clearly grown, something new is producing at midday, and we mark the customer as PV.
 
-The thresholds for both features are learned on the labelled customers, choosing the values that maximise F1 (`src/models/run_detect.py`; the result is saved in `artifacts/detect_params.json`). Training uses 2-year windows of each customer's data, so at prediction time we also look only at the **last 2 years**: so we reduce the habit changes noises. The installation date and the capacity, on the other hand, use the whole series.
+The thresholds for both features are learned on the labelled customers, choosing the values that maximise F1 (`src/models/run_detect.py`; the result is saved in `artifacts/detect_params.json`). Training uses 2-year windows of each customer's data, so at prediction time we also look only at the **last 2 years**, which also reduces the noise from older changes in the customer's habits. The installation date and the capacity, on the other hand, use the whole series.
 
 **Task 2, installation date** (`src/models/date.py`). Once panels are installed, midday consumption drops for good compared with the night. So for each day we compute the ratio between midday and night consumption (on a log scale), and look for the moment this ratio decreases. To avoid mistaking normal seasonal changes for an installation, we describe the series as a constant level, plus a yearly cycle (a sine and a cosine), plus a single step. We try every possible date for the step and keep the one that fits the data best. If no step improves the fit by at least 5%, the panels were most likely already there when the data starts, so we return the first day. The method has nothing to train: it only looks at each customer's own data.
 
@@ -90,6 +96,13 @@ Leave-one-customer-out on the 40 labelled development customers (`python -m src.
 | Final pipeline, robustness check: input cut to 2-year windows (5 rounds) | 0.909 | 0.608 | 0.439 | 77.93 ± 2.42 |
 
 Each held-out customer is given its full 2022-2025 series, exactly as in the hidden test. Inside the pipeline, detection looks only at the last 2 years of that series (the same length as its training windows), while the installation date and the capacity use the whole series. In the robustness check, the input itself is cut to 2-year windows, so every step sees only 2 years.
+
+Both validation runs need the prepared development data (see above) and take about one minute (full series) and three minutes (2-year windows):
+```
+python -m src.eval.loo_pipeline --protocol serie_intera --modes tutto_loo      # 81.82
+python -m src.eval.loo_pipeline --protocol finestre_2anni --modes tutto_loo    # 77.93 ± 2.42
+```
+Per-customer predictions are written to `outputs/`.
 
 On the full series 20 of the 22 PV plants are found with no false alarm among the 18 customers without PV. Compared with the previous version 2 customers change (one more plant found, one false alarm fewer); D and P drop slightly because the additional plant has a poor date and kWp. Dates: median error of 1 day, 13 of 20 within 7 days. Capacity: median relative error of 22%. Extensions: the development data contain a single labelled extension, which the method does not find (bonus 0 on dev).
 
